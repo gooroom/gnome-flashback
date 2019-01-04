@@ -1,0 +1,15 @@
+Description: shell: use g_strcmp0 which is null safe, instead of g_str_equal
+Origin: upstream, https://gitlab.gnome.org/GNOME/gnome-flashback/commit/1e9dd62ba35022cf
+Last-Update: 2018-11-22
+
+--- a/gnome-flashback/libshell/flashback-shell.c
++++ b/gnome-flashback/libshell/flashback-shell.c
+@@ -377,7 +377,7 @@
+   sender = (gchar *) g_hash_table_lookup (shell->grabbed_accelerators,
+                                           GUINT_TO_POINTER (action));
+ 
+-  if (g_str_equal (sender, g_dbus_method_invocation_get_sender (invocation)))
++  if (g_strcmp0 (sender, g_dbus_method_invocation_get_sender (invocation)) == 0)
+     {
+       success = real_ungrab (shell, action);
+ 

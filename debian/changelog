@@ -1,0 +1,312 @@
+gnome-flashback (3.30.0-3) unstable; urgency=medium
+
+  * Disable the compiz session. Upstream only supports original compiz,
+    not compiz-reloaded.
+  * Backport upstream patch fixing notifications crash when removing
+    monitor (fix-notifications-crash.diff).
+  * Backport upstream patch to fix segfault in handle_ungrab_accelerator()
+    (fix-handle-ungrab-crash.diff).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 04 Jan 2019 14:02:34 +0300
+
+gnome-flashback (3.30.0-2) unstable; urgency=medium
+
+  * Team upload
+
+  [ Dmitry Shachnev ]
+  * Add epoch to the required metacity version (1:3.30.1).
+
+  [ Jeremy Bicha ]
+  * Restore -Wl,-O1 to our LDFLAGS
+  * Bump Standards-Version to 4.3.0
+
+ -- Jeremy Bicha <jbicha@debian.org>  Sun, 23 Dec 2018 11:52:00 -0500
+
+gnome-flashback (3.30.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Update suggestion: gnome-user-guide (transitional) → gnome-user-docs.
+  * Update the package descriptions (see #895348).
+  * Bump required metacity version to 3.30.1.
+  * Bump gsettings-desktop-schemas-dev build-dependency to 3.24.0.
+  * Make gnome-flashback-common break libglib2.0-bin < 2.57.2, as we need
+    glib-compile-schemas that supports per-session overrides.
+  * Update debian/copyright.
+  * Install NEWS under its original name, not as changelog (Policy 12.7).
+  * Bump Standards-Version to 4.2.1.
+  * Remove dbgsym migration, it should be no longer needed.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sun, 09 Sep 2018 23:36:16 +0300
+
+gnome-flashback (3.28.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Drop gsd-no-a11ykeyboard.diff, included in the new release.
+  * Update to debhelper compat level 11.
+  * Drop dependency on nautilus.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 26 Mar 2018 11:19:10 +0300
+
+gnome-flashback (3.26.0-3) unstable; urgency=medium
+
+  [ Jeremy Bicha ]
+  * Update Vcs fields for migration to https://salsa.debian.org/
+
+  [ Dmitry Shachnev ]
+  * Backport upstream patch to make the GNOME Flashback session work with
+    gnome-settings-daemon 3.28 (gsd-no-a11ykeyboard.diff).
+  * Bump Standards-Version to 4.1.3, no changes needed.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sat, 17 Mar 2018 15:51:47 +0300
+
+gnome-flashback (3.26.0-2) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sun, 15 Oct 2017 11:40:24 +0300
+
+gnome-flashback (3.26.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop both patches, they were coming from upstream.
+  * Bump libgtk-3-dev build-dependency to 3.22.0, following configure.ac.
+  * Bump required gnome-settings-daemon version to 3.26, needed for the
+    new display config code.
+  * Update debian/copyright.
+  * Update debhelper compatibility level to 10.
+  * Bump Standards-Version to 4.1.1, no changes needed.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 05 Oct 2017 19:04:23 +0700
+
+gnome-flashback (3.24.0-2) unstable; urgency=medium
+
+  * Backport upstream commits to fix crashes on computers with touchscreens
+    (fix-touchscreen-crashes.diff).
+  * Backport upstream commit to fix the disabled Authenticate button in the
+    Authentication Agent dialog (polkit-password-entry.diff).
+  * Upload to unstable (closes: #869950).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Wed, 02 Aug 2017 18:10:49 +0300
+
+gnome-flashback (3.24.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Add build-dependencies on libgdk-pixbuf2.0-dev and libxfixes-dev,
+    following upstream configure.ac.
+  * Migrate Vcs fields from Svn to Git.
+  * Bump gnome-settings-daemon dependency to 3.23.2.
+  * Bump Standards-Version to 4.0.0, no changes needed.
+  * Make gnome-session-flashback suggest compiz.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 06 Jul 2017 12:05:32 +0300
+
+gnome-flashback (3.22.0-3) unstable; urgency=medium
+
+  * Bump gnome-session-fallback Breaks version to 3.8.4, that was the
+    last version of this package (closes: #842367).
+  * Make short descriptions a bit more informative (closes: #843143).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 07 Nov 2016 20:45:23 +0300
+
+gnome-flashback (3.22.0-2) unstable; urgency=medium
+
+  * Pass the old, CDBS-like libexecdir to configure.
+  * Move gnome-flashback-* scripts back to gnome-session-flashback package
+    (closes: #840068).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 10 Oct 2016 13:32:49 +0300
+
+gnome-flashback (3.22.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Add libxi-dev build-dependency, following upstream.
+  * Bump gsettings-desktop-schemas-dev build-dependency to 3.21.4,
+    following upstream.
+  * Update debian/copyright.
+  * Convert from cdbs to debhelper.
+  * Move gnome-flashback-* scripts to gnome-flashback package, because
+    they are now installed into architecture-specific location.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 07 Oct 2016 12:54:46 +0300
+
+gnome-flashback (3.20.2-1) unstable; urgency=medium
+
+  * New upstream bugfix release.
+    - Desktop background is now drawn directly on the root window,
+      crashes related to the old code should be gone (closes: #827298).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 25 Jul 2016 20:08:06 +0300
+
+gnome-flashback (3.20.1-2) unstable; urgency=medium
+
+  [ Dmitry Shachnev ]
+  * Make gnome-flashback provide notification-daemon.
+
+  [ Laurent Bigonville ]
+  * Make gnome-flashback provide polkit-1-auth-agent
+
+ -- Laurent Bigonville <bigon@debian.org>  Sun, 05 Jun 2016 15:57:15 +0200
+
+gnome-flashback (3.20.1-1) unstable; urgency=medium
+
+  * New upstream bugfix release.
+    - Fixes crash in notifications component (closes: #824656).
+  * Revert the previous change. Bluetooth support is not optional and the
+    binaries have been removed on non-Linux architectures.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 19 May 2016 14:36:56 +0300
+
+gnome-flashback (3.20.0-2) unstable; urgency=medium
+
+  * Enable libgnome-bluetooth-dev build-dependency only on linux-any
+    (closes: #823038).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 13 May 2016 22:40:46 +0300
+
+gnome-flashback (3.20.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Bump libgtk-3-dev build-dependency to 3.19.5, following upstream.
+  * Migrate to automatic dbgsym packages.
+    - Build-depend on debhelper 9.20160114~ for this.
+  * Drop gnome-session-flashback dependency on notification-daemon.
+    GNOME Flashback now has a built-in notifications mechanism.
+    - Depend on the latest gnome-flashback version instead.
+  * Bump Standards-Version to 3.9.8, no changes needed.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sun, 24 Apr 2016 13:50:29 +0300
+
+gnome-flashback (3.18.2-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Move files in /etc/xdg/autostart/ from gnome-flashback-common to
+    gnome-session-flashback package.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Wed, 17 Feb 2016 15:06:59 +0300
+
+gnome-flashback (3.18.1-1) unstable; urgency=medium
+
+  [ Michael Biebl ]
+  * Use https:// for Vcs-Browser.
+
+  [ Dmitry Shachnev ]
+  * New upstream release.
+  * Drop no longer needed build-dependency on libxkbcommon-x11-dev.
+  * Add new libpango1.0-dev build-dependency.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 15 Oct 2015 11:36:23 +0300
+
+gnome-flashback (3.18.0-1) unstable; urgency=medium
+
+  * New upstream release.
+    - Added new module for switching keyboard layouts (closes: #731245).
+    - Multiple fixes for display-config module (closes: #735279).
+  * Drop build-dependency on gnome-common, no longer needed.
+  * Add new build-dependencies:
+    - libgnome-bluetooth-dev for bluetooth applet;
+    - libibus-1.0-dev, libxkbcommon-x11-dev, libxkbfile-dev, xkb-data
+      for input-sources module;
+    - libpolkit-agent-1-dev, libpolkit-gobject-1-dev for polkit module.
+  * Install /usr/share/desktop-directories in gnome-flashback-common.
+  * Update debian/copyright.
+  * Drop no longer needed policykit-1-gnome dependency from
+    gnome-session-flashback.
+  * Tighten some dependencies.
+  * Update gnome-flashback package description.
+  * Make gnome-flashback suggest gnome-power-manager (the power applet
+    tries to call gnome-power-statistics application).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 25 Sep 2015 18:45:14 +0300
+
+gnome-flashback (3.17.2-2) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 16 Jun 2015 18:01:18 +0300
+
+gnome-flashback (3.17.2-1) experimental; urgency=medium
+
+  * New upstream release.
+    - Adds a workaround for showing the application menu (closes: #773644).
+  * Watch unstable releases.
+  * Drop ancient gnome-session Replaces.
+  * Minor description rewording of gnome-flashback package.
+  * Update debian/copyright.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sat, 06 Jun 2015 12:54:07 +0300
+
+gnome-flashback (3.16.1-1) experimental; urgency=medium
+
+  * New upstream release.
+    - Asks gnome-session to disable acceleration check (closes: #730495).
+  * Drop add_key_grabber.patch, applied upstream.
+  * Add new build-dependencies and update existing ones, according to
+    configure.ac.
+  * Bump gnome-session-bin dependency to a version that supports new
+    --disable-acceleration-check option.
+  * Make gnome-flashback recommend gnome-settings-daemon 3.15.4, the OSD
+    does not work with earlier versions.
+  * Relax notification-daemon dependency to support alternative packages
+    that provide notification-daemon.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Wed, 27 May 2015 14:07:32 +0300
+
+gnome-flashback (3.14.0-4) experimental; urgency=medium
+
+  * Merge 3.10.0-3 upload from unstable branch.
+  * Move gnome-screensaver from Depends to Recommends (it is no longer
+    in RequiredComponents list).
+  * Make gnome-session-flashback depend on gnome-flashback 3.14,
+    to make sure that gnome-flashback-init.desktop is available.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 20 Nov 2014 15:03:19 +0300
+
+gnome-flashback (3.14.0-3) experimental; urgency=medium
+
+  * Fix the regression introduced in previous upload (closes: #769998).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 18 Nov 2014 10:31:36 +0300
+
+gnome-flashback (3.14.0-2) experimental; urgency=medium
+
+  * Add missing postinst/prerm scripts (closes: #769763).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sun, 16 Nov 2014 19:13:48 +0300
+
+gnome-flashback (3.14.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update build-dependencies for the new release.
+  * Build session files from this package as well.
+  * Install XDG menu file.
+  * Install upstream changelog properly.
+  * Add alocal.m4 and configure to debian/clean.
+  * Bump Standards-Version to 3.9.6, no changes needed.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 27 Oct 2014 18:16:49 +0300
+
+gnome-flashback (3.10.0-3) unstable; urgency=medium
+
+  * Add keygrabber module, backported from upstream Git
+    (closes: #730096, #727046, #731418 and partially #771922).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 05 Dec 2014 10:11:50 +0300
+
+gnome-flashback (3.10.0-2) unstable; urgency=medium
+
+  * Fix Homepage URL.
+  * Add upstream patch to use non-symbolic icons in volume applet
+    (closes: #734822).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 04 Dec 2014 11:33:58 +0300
+
+gnome-flashback (3.10.0-1) unstable; urgency=medium
+
+  * Initial upload (closes: #758721).
+  * This application solves some problems of the GNOME Flashback session:
+    - It draws the background (which will fix #729846).
+    - It manages user activity so that gnome-settings-daemon can
+      show the mouse cursor.
+    - It provides End Session dialogs (which will fix #755140).
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 19 Sep 2014 17:09:43 +0400
