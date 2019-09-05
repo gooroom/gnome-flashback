@@ -1,0 +1,115 @@
+<schemalist gettext-domain="gnome-flashback">
+  <schema id="org.gnome.gnome-flashback" path="/org/gnome/gnome-flashback/">
+    <key name="a11y-keyboard" type="b">
+      <default>true</default>
+      <summary>a11y-keyboard</summary>
+    </key>
+
+    <key name="audio-device-selection" type="b">
+      <default>true</default>
+      <summary>Audio device selection</summary>
+      <description>If set to true, then GNOME Flashback application will be used to provide the audio device selection dialog.</description>
+    </key>
+
+    <key name="automount-manager" type="b">
+      <default>true</default>
+      <summary>Automount manager</summary>
+      <description>If set to true, then GNOME Flashback application will be used to automount removable media.</description>
+    </key>
+
+    <key name="bluetooth-applet" type="b">
+      <default>true</default>
+      <summary>Bluetooth applet</summary>
+      <description>If set to true, then GNOME Flashback application will be used to show a Bluetooth applet.</description>
+    </key>
+
+    <key name="desktop-background" type="b">
+      <default>true</default>
+      <summary>Desktop background</summary>
+      <description>If set to true, then GNOME Flashback application will be used to draw the desktop background.</description>
+    </key>
+
+    <key name="end-session-dialog" type="b">
+      <default>true</default>
+      <summary>End session dialog</summary>
+      <description>If set to true, then GNOME Flashback application will be used to show the end session dialog.</description>
+    </key>
+
+    <key name="idle-monitor" type="b">
+      <default>true</default>
+      <summary>Idle monitor</summary>
+      <description>If set to true, then GNOME Flashback application will be used for user activity monitoring.</description>
+    </key>
+
+    <key name="input-settings" type="b">
+      <default>true</default>
+      <summary>Input settings</summary>
+    </key>
+
+    <key name="input-sources" type="b">
+      <default>true</default>
+      <summary>Keyboard layouts and input methods</summary>
+      <description>If set to true, then GNOME Flashback application will be used to manage keyboard layouts and input methods.</description>
+    </key>
+
+    <key name="notifications" type="b">
+      <default>true</default>
+      <summary>Notification daemon</summary>
+      <description>If set to true, then GNOME Flashback application will be used to manage notifications.</description>
+    </key>
+
+    <key name="polkit" type="b">
+      <default>true</default>
+      <summary>Authentication agent for polkit</summary>
+      <description>This is the same authentication agent that was provided by PolicyKit-gnome.</description>
+    </key>
+
+    <key name="power-applet" type="b">
+      <default>true</default>
+      <summary>Power applet</summary>
+      <description>If set to true, then GNOME Flashback application will be used to show a power applet.</description>
+    </key>
+
+    <key name="screencast" type="b">
+      <default>true</default>
+      <summary>Screencasts</summary>
+      <description>If set to true, then GNOME Flashback application will be used to record the screen.</description>
+    </key>
+
+    <key name="screensaver" type="b">
+      <default>true</default>
+      <summary>Screensaver</summary>
+      <description>If set to true, then GNOME Flashback application will be used as a screensaver.</description>
+    </key>
+
+    <key name="screenshot" type="b">
+      <default>true</default>
+      <summary>Screenshots</summary>
+      <description>If set to true, then GNOME Flashback application will be used to take screenshots.</description>
+    </key>
+
+    <key name="shell" type="b">
+      <default>true</default>
+      <summary>Shell</summary>
+      <description>If set to true, then GNOME Flashback application will be used as a shell.</description>
+    </key>
+
+    <key name="sound-applet" type="b">
+      <default>true</default>
+      <summary>Sound applet</summary>
+      <description>If set to true, then GNOME Flashback application will be used to show a sound applet. This is the same sound applet that used to be a part of GNOME Control Center.</description>
+    </key>
+
+    <key name="status-notifier-watcher" type="b">
+      <default>true</default>
+      <summary>Status Notifier Watcher</summary>
+      <description>If set to true, then GNOME Flashback application will be used as Status Notifier Watcher.</description>
+    </key>
+
+    <key name="workarounds" type="b">
+      <default>true</default>
+      <summary>Workarounds</summary>
+      <description>If set to true, then GNOME Flashback application will use workarounds to fix bugs.</description>
+    </key>
+  </schema>
+</schemalist>
