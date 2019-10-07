@@ -2,3 +2,4 @@ fix-notifications-crash.diff
 fix-handle-ungrab-crash.diff
 disable_compiz_session.diff
 redraw-background-in-idle.patch
+gooroom-self-auth.patch

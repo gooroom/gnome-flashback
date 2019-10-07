@@ -9,3 +9,9 @@ export CPPFLAGS += -Wno-deprecated-declarations -Wno-error=cast-function-type
 
 override_dh_auto_configure:
 	dh_auto_configure -- --libexecdir=$$\{prefix}/lib/gnome-flashback
+
+override_dh_fixperms:
+	dh_fixperms
+
+	find debian -name 'polkit-agent-self-auth-helper' -exec chown root {} \;
+	find debian -name 'polkit-agent-self-auth-helper' -exec chmod +s {} \;
