@@ -70,7 +70,7 @@ index b32fa0a..0cf09e3 100644
  
  -include $(top_srcdir)/git.mk
 diff --git a/gnome-flashback/libpolkit/flashback-authenticator.c b/gnome-flashback/libpolkit/flashback-authenticator.c
-index f384119..d7105c2 100644
+index f384119..b374cdb 100644
 --- a/gnome-flashback/libpolkit/flashback-authenticator.c
 +++ b/gnome-flashback/libpolkit/flashback-authenticator.c
 @@ -24,9 +24,12 @@
@@ -1367,3 +1367,15 @@ index 0000000..3208f29
 +G_END_DECLS
 +
 +#endif /* __POLKIT_AGENT_SELF_AUTH_SESSION_H */
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index 3367e17..28cbc5e 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -32,6 +32,7 @@ gnome-flashback/libpolkit/flashback-authenticator.c
+ gnome-flashback/libpolkit/flashback-listener.c
+ gnome-flashback/libpolkit/flashback-polkit-dialog.c
+ gnome-flashback/libpolkit/flashback-polkit-dialog.ui
++gnome-flashback/libpolkit/polkit-agent-self-auth-dialog.ui
+ gnome-flashback/libpower-applet/gf-power-applet.c
+ gnome-flashback/libsound-applet/gf-sound-applet.c
+ gnome-flashback/libsound-applet/gvc-channel-bar.c
