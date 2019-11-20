@@ -1,3 +1,16 @@
+diff --git a/backends/gf-monitor-manager.c b/backends/gf-monitor-manager.c
+index 1958d12..90e02b1 100644
+--- a/backends/gf-monitor-manager.c
++++ b/backends/gf-monitor-manager.c
+@@ -42,7 +42,7 @@
+ #include "gf-monitors-config-private.h"
+ #include "gf-output-private.h"
+ 
+-#define DEFAULT_DISPLAY_CONFIGURATION_TIMEOUT 20
++#define DEFAULT_DISPLAY_CONFIGURATION_TIMEOUT 15
+ 
+ typedef struct
+ {
 diff --git a/gnome-flashback/flashback.gresource.xml b/gnome-flashback/flashback.gresource.xml
 index 2452385..29bcbe7 100644
 --- a/gnome-flashback/flashback.gresource.xml
