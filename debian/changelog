@@ -1,3 +1,15 @@
+gnome-flashback (3.30.0-3+grm2u1) unstable; urgency=medium
+
+  [ cjheo ]
+  * [378fa168] Added build options
+  * [045207c4] Redraw background in idle
+  * [41f4f74e] Add patch to handle self authorization
+  * [409cf326] Update gooroom-self-auth.patch for korean translation
+
+  [ Gooroom Autobuilder ]
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Sun, 01 Dec 2019 15:46:06 +0900
+
 gnome-flashback (3.30.0-3) unstable; urgency=medium
 
   * Disable the compiz session. Upstream only supports original compiz,
