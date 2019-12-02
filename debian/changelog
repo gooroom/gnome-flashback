@@ -1,3 +1,16 @@
+gnome-flashback (3.30.0-3+grm2u2) unstable; urgency=medium
+
+  [ HaeRyong Jeong ]
+  * [abcfc2d8] Changed monitor configuration time
+  * [aeb3de15] Changed monitor configuration restore time
+
+  [ cjheo ]
+  * [d46da179] Fixed a patch conflict
+
+  [ Gooroom Autobuilder ]
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Mon, 02 Dec 2019 12:45:02 +0900
+
 gnome-flashback (3.30.0-3+grm2u1) unstable; urgency=medium
 
   [ cjheo ]
