@@ -1,0 +1,13 @@
+diff --git a/backends/gf-monitor-manager-xrandr.c b/backends/gf-monitor-manager-xrandr.c
+index 071c6f8..a2beda3 100644
+--- a/backends/gf-monitor-manager-xrandr.c
++++ b/backends/gf-monitor-manager-xrandr.c
+@@ -1589,7 +1589,7 @@ gf_monitor_manager_xrandr_read_current (GfMonitorManager *manager)
+   manager->screen_height = HeightOfScreen (screen);
+ 
+   g_clear_pointer (&xrandr->resources, XRRFreeScreenResources);
+-  resources = XRRGetScreenResourcesCurrent (xrandr->xdisplay, xrandr->xroot);
++  resources = XRRGetScreenResources (xrandr->xdisplay, xrandr->xroot);
+ 
+   if (!resources)
+     return;
