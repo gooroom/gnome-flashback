@@ -5,3 +5,4 @@ redraw-background-in-idle.patch
 gooroom-self-auth.patch
 gooroom-monitor-configuration-restore-timeout
 gooroom-replaced-XRRGetScreenResourcesCurrent-with-XRRGetScreenResources-for-monitor-property-retrieval.patch
+gooroom-not-display-polkit-window-in-taskbar-and-pager.patch
