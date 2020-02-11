@@ -1,3 +1,16 @@
+gnome-flashback (3.30.0-3+grm2u3) unstable; urgency=medium
+
+  [ cjheo ]
+  * [333bcbc8] [Bug:1835] 모니터 속성이 '알려지지 않음(Unknown)'으로 표시되는 버그 수정
+  * [f3d4393b] polkit 다이얼로그의 윈도가 Taskbar 및 Pager에 표시되지 않도록 수정
+
+  [ HaeRyong Jeong ]
+  * [60739942] [Bug:1967] Fixed screenshot in clipboard
+
+  [ Gooroom Autobuilder ]
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Tue, 11 Feb 2020 09:26:31 +0900
+
 gnome-flashback (3.30.0-3+grm2u2) unstable; urgency=medium
 
   [ HaeRyong Jeong ]
