@@ -7,4 +7,5 @@ gooroom-monitor-configuration-restore-timeout
 gooroom-replaced-XRRGetScreenResourcesCurrent-with-XRRGetScreenResources-for-monitor-property-retrieval.patch
 gooroom-not-display-polkit-window-in-taskbar-and-pager.patch
 gooroom-apply-monitor-config-to-system-wide.patch
+gooroom-fix-monitor-labeler-error.patch
 gooroom-screenshot-in-clipboard.patch
