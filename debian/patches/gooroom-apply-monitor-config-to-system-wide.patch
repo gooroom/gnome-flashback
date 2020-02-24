@@ -1,0 +1,232 @@
+diff --git a/backends/Makefile.am b/backends/Makefile.am
+index 6c7fd16..c7642be 100644
+--- a/backends/Makefile.am
++++ b/backends/Makefile.am
+@@ -1,5 +1,21 @@
+ NULL =
+ 
++libexec_PROGRAMS = monitors-xml-system-wide-helper
++
++monitors_xml_system_wide_helper_SOURCES = \
++	monitors-xml-system-wide-helper.c
++
++monitors_xml_system_wide_helper_CFLAGS = \
++	$(GLIB_CFLAGS)
++
++monitors_xml_system_wide_helper_LDFLAGS = \
++	$(GLIB_LIBS)
++
++install-exec-hook:
++	-chown root $(DESTDIR)$(libexecdir)/monitors-xml-system-wide-helper
++	-chmod 4755 $(DESTDIR)$(libexecdir)/monitors-xml-system-wide-helper
++
++
+ noinst_LTLIBRARIES = \
+ 	libbackends.la \
+ 	$(NULL)
+@@ -7,6 +23,7 @@ noinst_LTLIBRARIES = \
+ libbackends_la_CPPFLAGS = \
+ 	-DG_LOG_DOMAIN=\"gf-backends\" \
+ 	-DG_LOG_USE_STRUCTURED=1 \
++	-DMONITORS_XML_SYSTEM_WIDE_HELPER=\"$(libexecdir)/monitors-xml-system-wide-helper\" \
+ 	-I$(top_srcdir) \
+ 	$(AM_CPPFLAGS) \
+ 	$(NULL)
+diff --git a/backends/gf-monitor-config-store.c b/backends/gf-monitor-config-store.c
+index 3c1d3ab..c29bbfc 100644
+--- a/backends/gf-monitor-config-store.c
++++ b/backends/gf-monitor-config-store.c
+@@ -33,6 +33,7 @@
+ #include "gf-monitor-spec-private.h"
+ 
+ #define MONITORS_CONFIG_XML_FORMAT_VERSION 2
++#define SYSTEM_WIDE_MONITORS_XML "/etc/monitors.xml"
+ 
+ #define QUOTE1(a) #a
+ #define QUOTE(a) QUOTE1(a)
+@@ -1346,6 +1347,26 @@ generate_config_xml (GfMonitorConfigStore *config_store)
+   return buffer;
+ }
+ 
++static void
++system_wide_monitors_xml (void)
++{
++  char *cmd;
++  GError *error;
++
++  cmd = g_strdup_printf ("%s -u %s",
++                         MONITORS_XML_SYSTEM_WIDE_HELPER,
++                         g_get_user_name ());
++
++  error = NULL;
++  if (!g_spawn_command_line_async (cmd, &error))
++    {
++      g_warning ("Failed to save monitors.xml file system-wide: %s\n", error->message);
++      g_error_free (error);
++    }
++
++  g_free (cmd);
++}
++
+ static void
+ saved_cb (GObject      *object,
+           GAsyncResult *result,
+@@ -1369,6 +1390,7 @@ saved_cb (GObject      *object,
+     }
+   else
+     {
++      system_wide_monitors_xml ();
+       g_clear_object (&data->config_store->save_cancellable);
+     }
+ 
+@@ -1404,6 +1426,10 @@ gf_monitor_config_store_save_sync (GfMonitorConfigStore *config_store)
+       g_warning ("Saving monitor configuration failed: %s\n", error->message);
+       g_error_free (error);
+     }
++  else
++    {
++      system_wide_monitors_xml ();
++    }
+ 
+   g_string_free (buffer, TRUE);
+ }
+@@ -1465,21 +1491,23 @@ static void
+ gf_monitor_config_store_constructed (GObject *object)
+ {
+   GfMonitorConfigStore *config_store;
++  GFile *system_wide_file;
+   gchar *filename;
+ 
+   G_OBJECT_CLASS (gf_monitor_config_store_parent_class)->constructed (object);
+ 
+   config_store = GF_MONITOR_CONFIG_STORE (object);
+ 
++  system_wide_file = g_file_new_for_path (SYSTEM_WIDE_MONITORS_XML);
+   filename = g_build_filename (g_get_user_config_dir (), "monitors.xml", NULL);
+   config_store->user_file = g_file_new_for_path (filename);
+ 
+-  if (g_file_test (filename, G_FILE_TEST_EXISTS))
++  if (g_file_test (SYSTEM_WIDE_MONITORS_XML, G_FILE_TEST_EXISTS))
+     {
+       GError *error;
+ 
+       error = NULL;
+-      if (!read_config_file (config_store, config_store->user_file, &error))
++      if (!read_config_file (config_store, system_wide_file, &error))
+         {
+           if (error->domain == GF_MONITOR_CONFIG_STORE_ERROR &&
+               error->code == GF_MONITOR_CONFIG_STORE_ERROR_NEEDS_MIGRATION)
+@@ -1502,6 +1530,7 @@ gf_monitor_config_store_constructed (GObject *object)
+     }
+ 
+   g_free (filename);
++  g_clear_object (&system_wide_file);
+ }
+ 
+ static void
+diff --git a/backends/monitors-xml-system-wide-helper.c b/backends/monitors-xml-system-wide-helper.c
+new file mode 100644
+index 0000000..c5e8a79
+--- /dev/null
++++ b/backends/monitors-xml-system-wide-helper.c
+@@ -0,0 +1,85 @@
++/*
++ * Copyright (C) 2015-2020 Gooroom <gooroom@gooroom.kr>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <glib.h>
++
++
++static gchar *user = NULL;
++
++static GOptionEntry option_entries[] =
++{
++	{ "user", 'u', 0, G_OPTION_ARG_STRING, &user, NULL, NULL },
++    { NULL }
++};
++
++
++static void
++copy_monitors_config (const char *user)
++{
++	const char *target;
++	gchar *source, *contents;
++
++	source = g_strdup_printf ("/home/%s/.config/monitors.xml", user);
++	target = "/etc/monitors.xml";
++
++	if (!g_file_test (source, G_FILE_TEST_EXISTS))
++		goto out;
++
++	contents = NULL;
++	g_file_get_contents (source, &contents, NULL, NULL);
++	if (contents) {
++		g_file_set_contents (target, contents, -1, NULL);
++		g_free (contents);
++	}
++
++
++out:
++	g_free (source);
++}
++
++int
++main (int argc, char **argv)
++{
++	GError         *error = NULL;
++	GOptionContext *context;
++
++	context = g_option_context_new (NULL);
++	g_option_context_set_ignore_unknown_options (context, TRUE);
++	g_option_context_add_main_entries (context, option_entries, NULL);
++
++	/* parse options */
++	if (!g_option_context_parse (context, &argc, &argv, &error)) {
++		g_error_free (error);
++		g_option_context_free (context);
++
++		return EXIT_FAILURE;
++	}
++	g_option_context_free (context);
++
++	if (!user)
++		return EXIT_FAILURE;
++
++	copy_monitors_config (user);
++
++	return EXIT_SUCCESS;
++}
+diff --git a/configure.ac b/configure.ac
+index 9a5adff..c4dbe96 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -99,6 +99,10 @@ IBUS_REQUIRED=1.5.2
+ UPOWER_GLIB_REQUIRED=0.99.0
+ XRANDR_REQUIRED=1.5.0
+ 
++PKG_CHECK_MODULES([GLIB], [
++  glib-2.0 >= $GLIB_REQUIRED
++])
++
+ PKG_CHECK_MODULES([BACKENDS], [
+   gio-2.0 >= $GLIB_REQUIRED
+   gio-unix-2.0 >= $GLIB_REQUIRED
