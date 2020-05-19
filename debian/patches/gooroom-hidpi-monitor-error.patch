@@ -1,0 +1,111 @@
+diff --git a/gnome-flashback/libdesktop-background/gf-desktop-background.c b/gnome-flashback/libdesktop-background/gf-desktop-background.c
+index 4fccbc1..b0ff95b 100644
+--- a/gnome-flashback/libdesktop-background/gf-desktop-background.c
++++ b/gnome-flashback/libdesktop-background/gf-desktop-background.c
+@@ -46,22 +46,54 @@ fade_finished_cb (GfDesktopBackground *background)
+   g_clear_object (&background->fade);
+ }
+ 
++static void
++get_display_size (GdkDisplay *display,
++                  int        *width,
++                  int        *height)
++{
++  GdkRectangle rect;
++  int n_monitors;
++  int i;
++
++  rect = (GdkRectangle) {};
++  display = gdk_display_get_default ();
++  n_monitors = gdk_display_get_n_monitors (display);
++
++  for (i = 0; i < n_monitors; i++)
++    {
++      GdkMonitor *monitor;
++      GdkRectangle geometry;
++
++      monitor = gdk_display_get_monitor (display, i);
++
++      gdk_monitor_get_geometry (monitor, &geometry);
++      gdk_rectangle_union (&rect, &geometry, &rect);
++    }
++
++  *width = rect.width;
++  *height = rect.height;
++}
++
+ static void
+ draw_background (GfDesktopBackground *background,
+                  gboolean             fade)
+ {
++  GdkDisplay *display;
+   GdkScreen *screen;
+   GdkWindow *root;
+   gint width;
+   gint height;
++  gint scale;
+   cairo_surface_t *surface;
+ 
+-  screen = gdk_screen_get_default ();
++  display = gdk_display_get_default ();
++  screen = gdk_display_get_default_screen (display);
+   root = gdk_screen_get_root_window (screen);
+-  width = gdk_window_get_width (root);
+-  height = gdk_window_get_height (root);
++  scale = gdk_window_get_scale_factor (root);
++
++  get_display_size (display, &width, &height);
+ 
+-  surface = gnome_bg_create_surface (background->bg, root, width, height, TRUE);
++  surface = gnome_bg_create_surface (background->bg, root, width*scale, height*scale, TRUE);
+ 
+   if (fade)
+     {
+diff --git a/gnome-flashback/libshell/flashback-monitor-labeler.c b/gnome-flashback/libshell/flashback-monitor-labeler.c
+index 8b95eb9..ec6c71c 100644
+--- a/gnome-flashback/libshell/flashback-monitor-labeler.c
++++ b/gnome-flashback/libshell/flashback-monitor-labeler.c
+@@ -304,15 +304,12 @@ flashback_monitor_labeler_show2 (FlashbackMonitorLabeler *labeler,
+     return;
+ 
+   if (labeler->windows != NULL)
+-    return;
+-
+-  /*if (labeler->windows != NULL)
+     {
+       for (i = 0; i < labeler->n_windows; i++)
+         gtk_widget_destroy (GTK_WIDGET (labeler->windows[i]));
+       g_free (labeler->windows);
+       labeler->windows = NULL;
+-    }*/
++    }
+ 
+   g_variant_iter_init (&iter, params);
+ 
+diff --git a/gnome-flashback/libshell/gf-label-window.c b/gnome-flashback/libshell/gf-label-window.c
+index 61cc964..0491298 100644
+--- a/gnome-flashback/libshell/gf-label-window.c
++++ b/gnome-flashback/libshell/gf-label-window.c
+@@ -95,6 +95,7 @@ gf_label_window_new (gint         monitor,
+   gint width;
+   gint height;
+   gint size;
++  gint scale;
+ 
+   display = gdk_display_get_default ();
+   window = g_object_new (GF_TYPE_LABEL_WINDOW,
+@@ -102,11 +103,12 @@ gf_label_window_new (gint         monitor,
+                          NULL);
+ 
+   gdk_monitor = gdk_display_get_monitor (display, monitor);
+-  gdk_monitor_get_workarea (gdk_monitor, &window->monitor);
++  gdk_monitor_get_geometry (gdk_monitor, &window->monitor);
++  scale = gdk_monitor_get_scale_factor (gdk_monitor);
+ 
+   width = window->monitor.width;
+   height = window->monitor.height;
+-  size = 60 * MAX (1, MIN (width / 640.0, height / 480.0));
++  size = 60 * MAX (1, MIN ((width * scale)/ 640.0, (height * scale)/ 480.0));
+ 
+   gtk_window_resize (GTK_WINDOW (window), size, size);
+ 

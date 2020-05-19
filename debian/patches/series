@@ -8,3 +8,4 @@ gooroom-replaced-XRRGetScreenResourcesCurrent-with-XRRGetScreenResources-for-mon
 gooroom-not-display-polkit-window-in-taskbar-and-pager.patch
 gooroom-apply-monitor-config-to-system-wide.patch
 gooroom-fix-monitor-labeler-error.patch
+gooroom-hidpi-monitor-error.patch
