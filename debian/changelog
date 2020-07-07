@@ -1,3 +1,16 @@
+gnome-flashback (3.30.0-3+grm2u4) unstable; urgency=medium
+
+  [ cjheo ]
+  * [91a965f6] 사용자의 해상도 변경을 시스템에 적용하여 로그인매니저(greeter)에서도 변경된 해상도를 적용받도록 처리
+  * [851450c6] Fixed monitor label display error when setting display of multiple monitors
+  * [02e5cab5] Deleted gooroom-screenshot-in-clipboard.patch
+  * [782c488e] 고해상도 모니터(4k) 에서 백그라운드 그리기 및 모니터 라벨러 오류 수정
+  * [32659d97] [Bug: 2428] Remove secondary text from autorunmanager module's error dialog
+
+  [ Gooroom Autobuilder ]
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Tue, 07 Jul 2020 10:10:36 +0900
+
 gnome-flashback (3.30.0-3+grm2u3) unstable; urgency=medium
 
   [ cjheo ]
