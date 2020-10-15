@@ -1,0 +1,12 @@
+Makefile.in
+aclocal.m4
+backends/gf-dbus-display-config.*
+build-aux/ltmain.sh
+configure
+dbus/*.[ch]
+gnome-flashback/gf-resources.*
+gnome-flashback/libidle-monitor/meta-dbus-idle-monitor.*
+ltmain.sh
+m4/libtool.m4
+po/*.gmo
+po/stamp-po
