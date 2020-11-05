@@ -2,8 +2,12 @@ NULL =
 
 SUBDIRS = \
 	data \
+	dbus \
+	daemons \
 	backends \
+	gvc \
 	gnome-flashback \
+	system-indicators \
 	po \
 	$(NULL)
 
@@ -28,10 +32,6 @@ MAINTAINERCLEANFILES = \
 	$(srcdir)/po/quot.sed \
 	$(srcdir)/po/remove-potcdate.sin \
 	$(srcdir)/po/stamp-po \
-	$(NULL)
-
-EXTRA_DIST = \
-	$(wildcard $(top_srcdir)/modulesets/*.modules) \
 	$(NULL)
 
 GITIGNOREFILES = $(PACKAGE)-\*.tar.{gz,bz2,xz}

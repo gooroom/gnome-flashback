@@ -28,8 +28,14 @@ libinput_sources_la_SOURCES = \
 	gf-candidate-popup.h \
 	gf-ibus-manager.c \
 	gf-ibus-manager.h \
+	gf-input-source-ibus.c \
+	gf-input-source-ibus.h \
+	gf-input-source-xkb.c \
+	gf-input-source-xkb.h \
 	gf-input-source.c \
 	gf-input-source.h \
+	gf-input-sources-button.c \
+	gf-input-sources-button.h \
 	gf-input-sources.c \
 	gf-input-sources.h \
 	gf-input-source-manager.c \
@@ -48,6 +54,7 @@ libinput_sources_la_LDFLAGS = \
 	$(NULL)
 
 libinput_sources_la_LIBADD = \
+	$(top_builddir)/dbus/libdbus.la \
 	$(top_builddir)/gnome-flashback/libcommon/libcommon.la \
 	$(INPUT_SOURCES_LIBS) \
 	$(LIBM) \

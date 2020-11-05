@@ -1,3 +1,114 @@
+Version 3.38.0
+==============
+- Configure systemd session using a drop-in.
+- Get session path from logind manager. (#67)
+- Updated translations.
+
+Version 3.37.3
+==============
+- Update lock screen window on monitor changes. (LP:#1891855)
+- Don't lock screen on suspend if automatic screen lock
+  is disabled. (LP:#1891681)
+- Updated translations. (LP:#1882531)
+
+Version 3.37.2
+==============
+- Fix enum type generation. (#52)
+
+Version 3.37.1
+==============
+- Add a possibility to permanently delete files from desktop. (#28)
+  (Desktop now requires nautilus 3.37.1.1+!)
+- Fix screensaver unlock problems. (#46)
+- Fix few small memory leaks.
+- Fix screenshot saving to clipboard. (#50)
+- Active desktop icon rename with F2 key. (LP:#1875703)
+- Fix creating new desktop icons. (LP:#1875317)
+- Updated translations.
+
+Version 3.36.1
+==============
+- Disable unimplemented icon placement modes. (#41)
+- Fix lock screen button in end session dialog. (#43)
+- Exclude Extensions application from menu. (#42)
+- Fix visibility of input source button in lock screen. (#45)
+- Do no close/destroy desktop window. (gnome-applets#15)
+- Fix use after free in System Indicators. (gnome-panel#21)
+
+Version 3.36.0
+==============
+- Save screenshot to clipboard when filename is empty.
+- Show password box on key presses. (#36)
+- Fix system indicators localisation. (#39)
+- Fix build with gettext 0.20+. (!25)
+- Add UsbProtection plugin to required components.
+- Disable screen locking without PAM configuration file. (#38)
+- Updated translations.
+
+Version 3.35.2
+==============
+- Add Yaru as supported theme. (#31)
+- Screensaver based on gnome-screensaver. (#18)
+- Fix crash and memory leaks in notifications module.
+- New system indicators applet for gnome-panel.
+- Install gnome panel layout for GNOME Flashback session.
+- Updated translations.
+
+Version 3.35.1
+==============
+- Remove desktop-background module.
+- Add root-background module, disabled by default.
+- Add new desktop module for icons and background. (#7)
+- Install compiz configuration. (!16)
+- Add support for shift_caps_switch XKB option. (#24)
+- Fix shape region for screenshot select area. (#26)
+- Fix crash with external monitor. (#25)
+- Fix crash in clipboard manager.
+- Updated translations.
+
+Version 3.34.1
+==============
+- Add clipboard manager. (#19)
+- Updated translations.
+
+Version 3.34.0
+==============
+- Require gnome-session-x11-services systemd target.
+- Updated translations.
+
+Version 3.33.92
+===============
+- Fix level bar in OSD window. (#22)
+- Fix background when changing resolution. (#23)
+- Updated translations:
+  Anders Jonsson (sv), Balázs Úr (hu), Daniel Rusek (cs), Serdar Sağlam (tr).
+
+Version 3.33.1
+==============
+- Remove Clipboard plugin from required components. (#19)
+- Remove Mouse plugin from required components. (#20)
+- Support startup via systemd user instance. (!17)
+- Fix input source status icon flickering. (#16)
+- Remove gnome-flashback-init.desktop file.
+- Update org.gnome.Shell D-Bus interface.
+- Updated translations:
+  Asier Sarasua Garmendia (eu), Daniel Mustieles García (es),
+  Kukuh Syafaat (id), Piotr Drąg (pl).
+
+Version 3.32.0
+==============
+- Fix deprecation warnings.
+- Fix crash in notifications module when removing monitor.
+- Fix crash in shell module when calling UngrabAccelerator with invalid action.
+- Remove workarounds module, no longer needed.
+- Update org.gnome.Mutter.DisplayConfig D-Bus interface.
+- Update org.gnome.Shell D-Bus interface.
+- Updated translations:
+  Alan Mortensen (da), Anders Jonsson (sv), Balázs Úr (hu),
+  Daniel Mustieles (es), Daniel Mustieles García (es), Kukuh Syafaat (id),
+  Марко М. Костић (sr), Marek Cernocky (cs), Matej Urbančič (sl),
+  Nathan Follens (nl), Rafael Fontenelle (pt_BR), Piotr Drąg (pl).
+
 Version 3.30.0
 ==============
 - Fix build warnings.

@@ -66,13 +66,8 @@ draw_cb (GtkWidget *widget,
   width = gtk_widget_get_allocated_width (widget);
   height = gtk_widget_get_allocated_height (widget);
 
-  gtk_style_context_save (context);
-  gtk_style_context_add_class (context, GTK_STYLE_CLASS_RUBBERBAND);
-
   gtk_render_background (context, cr, 0, 0, width, height);
   gtk_render_frame (context, cr, 0, 0, width, height);
-
-  gtk_style_context_restore (context);
 
   return TRUE;
 }
@@ -175,8 +170,8 @@ motion_notify_event_cb (GtkWidget      *widget,
           cairo_region_t *region;
           cairo_rectangle_int_t rectangle;
 
-          rectangle.x = x;
-          rectangle.y = y;
+          rectangle.x = 0;
+          rectangle.y = 0;
           rectangle.width = width;
           rectangle.height = height;
 
@@ -213,8 +208,13 @@ setup_window (GfSelectArea *select_area)
 
   if (gdk_screen_is_composited (screen) && visual != NULL)
     {
+      GtkStyleContext *context;
+
       gtk_widget_set_visual (select_area->window, visual);
       select_area->composited = TRUE;
+
+      context = gtk_widget_get_style_context (select_area->window);
+      gtk_style_context_add_class (context, GTK_STYLE_CLASS_RUBBERBAND);
     }
 
   g_signal_connect (select_area->window, "draw",

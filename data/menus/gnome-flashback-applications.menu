@@ -20,14 +20,17 @@
     <Include>
       <And>
         <Category>Utility</Category>
-	<!-- Accessibility spec must have either the Utility or Settings
-	     category, and we display an accessibility submenu already for
-	     the ones that do not have Settings, so don't display accessibility
-	     applications here -->
+        <!-- Accessibility spec must have either the Utility or Settings
+             category, and we display an accessibility submenu already for
+             the ones that do not have Settings, so don't display accessibility
+             applications here -->
         <Not><Category>Accessibility</Category></Not>
         <Not><Category>System</Category></Not>
       </And>
     </Include>
+    <Exclude>
+      <Filename>org.gnome.Extensions.desktop</Filename>
+    </Exclude>
   </Menu> <!-- End Accessories -->
 
   <!-- Accessibility submenu -->
@@ -94,12 +97,12 @@
     <Include>
       <And>
         <Category>Network</Category>
-	<Not>
-	  <Category>X-GNOME-WebApplication</Category>
-	</Not>
+        <Not>
+          <Category>X-GNOME-WebApplication</Category>
+        </Not>
       </And>
     </Include>
-  </Menu>   <!-- End Internet -->
+  </Menu> <!-- End Internet -->
 
   <!-- Web Applications -->
   <Menu>
@@ -107,11 +110,11 @@
     <Directory>X-GNOME-WebApplications.directory</Directory>
     <Include>
       <And>
-	<Category>Network</Category>
-	<Category>X-GNOME-WebApplication</Category>
+        <Category>Network</Category>
+        <Category>X-GNOME-WebApplication</Category>
       </And>
     </Include>
-  </Menu>
+  </Menu> <!-- End Web Applications -->
 
   <!-- Multimedia -->
   <Menu>
@@ -122,7 +125,7 @@
         <Category>AudioVideo</Category>
       </And>
     </Include>
-  </Menu>   <!-- End Multimedia -->
+  </Menu> <!-- End Multimedia -->
 
   <!-- Office -->
   <Menu>
@@ -177,7 +180,7 @@
         </And>
       </Include>
     </Menu>
-  </Menu>   <!-- End System Tools -->
+  </Menu> <!-- End System Tools -->
 
   <!-- Other -->
   <Menu>
@@ -194,12 +197,6 @@
     </Include>
   </Menu> <!-- End Other -->
 
-   <Layout>
-     <Merge type="menus" />
-     <Menuname>Other</Menuname>
-     <Merge type="files" />
-   </Layout>
-
   <Include>
     <Filename>org.gnome.Software.desktop</Filename>
   </Include>
@@ -207,6 +204,7 @@
   <!-- Separator between menus and GNOME Software -->
   <Layout>
     <Merge type="menus"/>
+    <Menuname>Other</Menuname>
     <Merge type="files"/>
     <Separator/>
     <Filename>org.gnome.Software.desktop</Filename>

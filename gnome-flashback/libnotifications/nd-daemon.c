@@ -19,12 +19,12 @@
  */
 
 #include "config.h"
+#include "nd-daemon.h"
 
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 
-#include "nd-daemon.h"
-#include "gf-fd-notifications-gen.h"
+#include "dbus/gf-fd-notifications-gen.h"
 #include "nd-notification.h"
 #include "nd-queue.h"
 
@@ -256,8 +256,6 @@ bus_acquired_handler_cb (GDBusConnection *connection,
     {
       g_warning ("Failed to export interface: %s", error->message);
       g_error_free (error);
-
-      gtk_main_quit ();
     }
 }
 
@@ -266,7 +264,6 @@ name_lost_handler_cb (GDBusConnection *connection,
                       const gchar     *name,
                       gpointer         user_data)
 {
-  gtk_main_quit ();
 }
 
 static void

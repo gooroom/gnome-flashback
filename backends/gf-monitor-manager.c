@@ -6,7 +6,7 @@
  * Copyright (C) 2003 Rob Adams
  * Copyright (C) 2004-2006 Elijah Newren
  * Copyright (C) 2013 Red Hat Inc.
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,6 @@
 
 #include "config.h"
 
-#include <glib/gi18n-lib.h>
 #include <math.h>
 #include <string.h>
 
@@ -46,13 +45,15 @@
 
 typedef struct
 {
-  GfBackend *backend;
+  GfBackend   *backend;
 
-  gboolean   in_init;
+  gboolean     in_init;
 
-  guint      bus_name_id;
+  guint        bus_name_id;
 
-  guint      persistent_timeout_id;
+  guint        persistent_timeout_id;
+
+  GfPowerSave  power_save_mode;
 } GfMonitorManagerPrivate;
 
 typedef gboolean (* MonitorMatchFunc) (GfMonitor *monitor);
@@ -63,6 +64,8 @@ enum
 
   PROP_BACKEND,
 
+  PROP_PANEL_ORIENTATION_MANAGED,
+
   LAST_PROP
 };
 
@@ -70,6 +73,8 @@ static GParamSpec *manager_properties[LAST_PROP] = { NULL };
 
 enum
 {
+  MONITORS_CHANGED,
+  POWER_SAVE_MODE_CHANGED,
   CONFIRM_DISPLAY_CHANGE,
 
   LAST_SIGNAL
@@ -77,11 +82,7 @@ enum
 
 static guint manager_signals[LAST_SIGNAL] = { 0 };
 
-static void gf_monitor_manager_display_config_init (GfDBusDisplayConfigIface *iface);
-
-G_DEFINE_ABSTRACT_TYPE_WITH_CODE (GfMonitorManager, gf_monitor_manager, GF_DBUS_TYPE_DISPLAY_CONFIG_SKELETON,
-                                  G_ADD_PRIVATE (GfMonitorManager)
-                                  G_IMPLEMENT_INTERFACE (GF_DBUS_TYPE_DISPLAY_CONFIG, gf_monitor_manager_display_config_init))
+G_DEFINE_TYPE_WITH_PRIVATE (GfMonitorManager, gf_monitor_manager, G_TYPE_OBJECT)
 
 /* Array index matches GfMonitorTransform */
 static gfloat transform_matrices[][6] =
@@ -136,28 +137,29 @@ power_save_mode_changed (GfMonitorManager *manager,
                          GParamSpec       *pspec,
                          gpointer          user_data)
 {
+  GfMonitorManagerPrivate *priv;
   GfMonitorManagerClass *manager_class;
-  GfDBusDisplayConfig *display_config;
   gint mode;
 
+  priv = gf_monitor_manager_get_instance_private (manager);
   manager_class = GF_MONITOR_MANAGER_GET_CLASS (manager);
-  display_config = GF_DBUS_DISPLAY_CONFIG (manager);
-  mode = gf_dbus_display_config_get_power_save_mode (display_config);
+  mode = gf_dbus_display_config_get_power_save_mode (manager->display_config);
 
   if (mode == GF_POWER_SAVE_UNSUPPORTED)
     return;
 
   /* If DPMS is unsupported, force the property back. */
-  if (manager->power_save_mode == GF_POWER_SAVE_UNSUPPORTED)
+  if (priv->power_save_mode == GF_POWER_SAVE_UNSUPPORTED)
     {
-      gf_dbus_display_config_set_power_save_mode (display_config, GF_POWER_SAVE_UNSUPPORTED);
+      gf_dbus_display_config_set_power_save_mode (manager->display_config,
+                                                  GF_POWER_SAVE_UNSUPPORTED);
       return;
     }
 
   if (manager_class->set_power_save_mode)
     manager_class->set_power_save_mode (manager, mode);
 
-  manager->power_save_mode = mode;
+  gf_monitor_manager_power_save_mode_changed (manager, mode);
 }
 
 static void
@@ -180,11 +182,11 @@ gf_monitor_manager_notify_monitors_changed (GfMonitorManager *manager)
 
   priv = gf_monitor_manager_get_instance_private (manager);
 
-  manager->current_switch_config = GF_MONITOR_SWITCH_CONFIG_UNKNOWN;
-
   gf_backend_monitors_changed (priv->backend);
 
-  g_signal_emit_by_name (manager, "monitors-changed");
+  g_signal_emit (manager, manager_signals[MONITORS_CHANGED], 0);
+
+  gf_dbus_display_config_emit_monitors_changed (manager->display_config);
 }
 
 static GfMonitor *
@@ -204,6 +206,12 @@ find_monitor (GfMonitorManager *monitor_manager,
     }
 
   return NULL;
+}
+
+static GfMonitor *
+get_active_monitor (GfMonitorManager *manager)
+{
+  return find_monitor (manager, gf_monitor_is_active);
 }
 
 static gboolean
@@ -322,13 +330,17 @@ calculate_monitor_scale (GfMonitorManager *manager,
 static gfloat
 derive_calculated_global_scale (GfMonitorManager *manager)
 {
-  GfMonitor *primary_monitor;
+  GfMonitor *monitor;
 
-  primary_monitor = gf_monitor_manager_get_primary_monitor (manager);
-  if (!primary_monitor)
+  monitor = gf_monitor_manager_get_primary_monitor (manager);
+
+  if (!monitor || !gf_monitor_is_active (monitor))
+    monitor = get_active_monitor (manager);
+
+  if (!monitor)
     return 1.0;
 
-  return calculate_monitor_scale (manager, primary_monitor);
+  return calculate_monitor_scale (manager, monitor);
 }
 
 static GfLogicalMonitor *
@@ -493,6 +505,9 @@ orientation_changed (GfOrientationManager *orientation_manager,
   GError *error = NULL;
   GfMonitorsConfig *config;
 
+  if (!manager->panel_orientation_managed)
+    return;
+
   switch (gf_orientation_manager_get_orientation (orientation_manager))
     {
       case GF_ORIENTATION_NORMAL:
@@ -529,6 +544,30 @@ orientation_changed (GfOrientationManager *orientation_manager,
     }
 
   g_object_unref (config);
+}
+
+static void
+update_panel_orientation_managed (GfMonitorManager *self)
+{
+  GfMonitorManagerPrivate *priv;
+  GfOrientationManager *orientation_manager;
+  gboolean panel_orientation_managed;
+
+  priv = gf_monitor_manager_get_instance_private (self);
+
+  orientation_manager = gf_backend_get_orientation_manager (priv->backend);
+  panel_orientation_managed = gf_orientation_manager_has_accelerometer (orientation_manager);
+
+  if (self->panel_orientation_managed == panel_orientation_managed)
+    return;
+
+  self->panel_orientation_managed = panel_orientation_managed;
+
+  g_object_notify_by_pspec (G_OBJECT (self),
+                            manager_properties[PROP_PANEL_ORIENTATION_MANAGED]);
+
+  gf_dbus_display_config_set_panel_orientation_managed (self->display_config,
+                                                        panel_orientation_managed);
 }
 
 static void
@@ -758,6 +797,7 @@ create_monitor_config_from_variant (GfMonitorManager  *manager,
   GfMonitor *monitor;
   GfMonitorMode *monitor_mode;
   gboolean enable_underscanning;
+  gboolean set_underscanning;
   GfMonitorSpec *monitor_spec;
   GfMonitorModeSpec *monitor_mode_spec;
   GfMonitorConfig *monitor_config;
@@ -796,11 +836,24 @@ create_monitor_config_from_variant (GfMonitorManager  *manager,
     }
 
   enable_underscanning = FALSE;
-  g_variant_lookup (properties_variant, "underscanning", "b", &enable_underscanning);
+  set_underscanning = g_variant_lookup (properties_variant,
+                                        "underscanning", "b",
+                                        &enable_underscanning);
 
   g_variant_unref (properties_variant);
   g_free (connector);
   g_free (mode_id);
+
+  if (set_underscanning)
+    {
+      if (enable_underscanning && !gf_monitor_supports_underscanning (monitor))
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                       "Underscanning requested but unsupported");
+
+          return NULL;
+        }
+    }
 
   monitor_spec = gf_monitor_spec_clone (gf_monitor_get_spec (monitor));
 
@@ -935,93 +988,6 @@ is_valid_layout_mode (GfLogicalMonitorLayoutMode layout_mode)
   return FALSE;
 }
 
-static const gdouble known_diagonals[] =
-  {
-    12.1,
-    13.3,
-    15.6
-  };
-
-static gchar *
-diagonal_to_str (gdouble d)
-{
-  guint i;
-
-  for (i = 0; i < G_N_ELEMENTS (known_diagonals); i++)
-    {
-      gdouble delta;
-
-      delta = fabs(known_diagonals[i] - d);
-
-      if (delta < 0.1)
-        return g_strdup_printf ("%0.1lf\"", known_diagonals[i]);
-    }
-
-  return g_strdup_printf ("%d\"", (int) (d + 0.5));
-}
-
-static gchar *
-make_display_name (GfMonitorManager *manager,
-                   GfOutput         *output)
-{
-  gchar *inches;
-  gchar *vendor_name;
-
-  if (gf_output_is_laptop (output))
-    return g_strdup (_("Built-in display"));
-
-  inches = NULL;
-  vendor_name = NULL;
-
-  if (output->width_mm > 0 && output->height_mm > 0)
-    {
-      gint width_mm;
-      gint height_mm;
-      gdouble d;
-
-      width_mm = output->width_mm;
-      height_mm = output->height_mm;
-      d = sqrt (width_mm * width_mm + height_mm * height_mm);
-
-      inches = diagonal_to_str (d / 25.4);
-    }
-
-  if (g_strcmp0 (output->vendor, "unknown") != 0)
-    {
-      if (!manager->pnp_ids)
-        manager->pnp_ids = gnome_pnp_ids_new ();
-
-      vendor_name = gnome_pnp_ids_get_pnp_id (manager->pnp_ids, output->vendor);
-
-      if (!vendor_name)
-        vendor_name = g_strdup (output->vendor);
-    }
-  else
-    {
-      if (inches != NULL)
-        vendor_name = g_strdup (_("Unknown"));
-      else
-        vendor_name = g_strdup (_("Unknown Display"));
-    }
-
-  if (inches != NULL)
-    {
-      gchar *display_name;
-
-      /* TRANSLATORS: this is a monitor vendor name, followed by a
-       * size in inches, like 'Dell 15"'
-       */
-      display_name = g_strdup_printf (_("%s %s"), vendor_name, inches);
-
-      g_free (vendor_name);
-      g_free (inches);
-
-      return display_name;
-    }
-
-  return vendor_name;
-}
-
 static const gchar *
 get_connector_type_name (GfConnectorType connector_type)
 {
@@ -1053,13 +1019,22 @@ get_connector_type_name (GfConnectorType connector_type)
 static gboolean
 is_main_tiled_monitor_output (GfOutput *output)
 {
-  return output->tile_info.loc_h_tile == 0 && output->tile_info.loc_v_tile == 0;
+  const GfOutputInfo *output_info;
+
+  output_info = gf_output_get_info (output);
+
+  return (output_info->tile_info.loc_h_tile == 0 &&
+          output_info->tile_info.loc_v_tile == 0);
 }
 
 static void
 rebuild_monitors (GfMonitorManager *manager)
 {
+  GfMonitorManagerPrivate *priv;
+  GList *gpus;
   GList *l;
+
+  priv = gf_monitor_manager_get_instance_private (manager);
 
   if (manager->monitors)
     {
@@ -1067,36 +1042,73 @@ rebuild_monitors (GfMonitorManager *manager)
       manager->monitors = NULL;
     }
 
-  for (l = manager->outputs; l; l = l->next)
+  gpus = gf_backend_get_gpus (priv->backend);
+
+  for (l = gpus; l; l = l->next)
     {
-      GfOutput *output = l->data;
+      GfGpu *gpu = l->data;
+      GList *k;
 
-      if (output->tile_info.group_id)
+      for (k = gf_gpu_get_outputs (gpu); k; k = k->next)
         {
-          if (is_main_tiled_monitor_output (output))
+          GfOutput *output = k->data;
+          const GfOutputInfo *output_info;
+
+          output_info = gf_output_get_info (output);
+
+          if (output_info->tile_info.group_id)
             {
-              GfMonitorTiled *monitor_tiled;
+              if (is_main_tiled_monitor_output (output))
+                {
+                  GfMonitorTiled *monitor_tiled;
 
-              monitor_tiled = gf_monitor_tiled_new (manager, output);
-              manager->monitors = g_list_append (manager->monitors, monitor_tiled);
+                  monitor_tiled = gf_monitor_tiled_new (gpu, manager, output);
+                  manager->monitors = g_list_append (manager->monitors, monitor_tiled);
+                }
             }
-        }
-      else
-        {
-          GfMonitorNormal *monitor_normal;
+          else
+            {
+              GfMonitorNormal *monitor_normal;
 
-          monitor_normal = gf_monitor_normal_new (manager, output);
-          manager->monitors = g_list_append (manager->monitors, monitor_normal);
+              monitor_normal = gf_monitor_normal_new (gpu, output);
+              manager->monitors = g_list_append (manager->monitors, monitor_normal);
+            }
         }
     }
 }
 
+static GList *
+combine_gpu_lists (GfMonitorManager *manager,
+                   GList            * (*list_getter) (GfGpu *gpu))
+{
+  GfMonitorManagerPrivate *priv;
+  GList *gpus;
+  GList *list = NULL;
+  GList *l;
+
+  priv = gf_monitor_manager_get_instance_private (manager);
+
+  gpus = gf_backend_get_gpus (priv->backend);
+
+  for (l = gpus; l; l = l->next)
+    {
+      GfGpu *gpu = l->data;
+
+      list = g_list_concat (list, g_list_copy (list_getter (gpu)));
+    }
+
+  return list;
+}
+
 static gboolean
 gf_monitor_manager_handle_get_resources (GfDBusDisplayConfig   *skeleton,
-                                         GDBusMethodInvocation *invocation)
+                                         GDBusMethodInvocation *invocation,
+                                         GfMonitorManager      *manager)
 {
-  GfMonitorManager *manager;
   GfMonitorManagerClass *manager_class;
+  GList *combined_modes;
+  GList *combined_outputs;
+  GList *combined_crtcs;
   GVariantBuilder crtc_builder;
   GVariantBuilder output_builder;
   GVariantBuilder mode_builder;
@@ -1105,169 +1117,211 @@ gf_monitor_manager_handle_get_resources (GfDBusDisplayConfig   *skeleton,
   gint max_screen_width;
   gint max_screen_height;
 
-  manager = GF_MONITOR_MANAGER (skeleton);
-  manager_class = GF_MONITOR_MANAGER_GET_CLASS (skeleton);
+  manager_class = GF_MONITOR_MANAGER_GET_CLASS (manager);
+
+  combined_modes = combine_gpu_lists (manager, gf_gpu_get_modes);
+  combined_outputs = combine_gpu_lists (manager, gf_gpu_get_outputs);
+  combined_crtcs = combine_gpu_lists (manager, gf_gpu_get_crtcs);
 
   g_variant_builder_init (&crtc_builder, G_VARIANT_TYPE ("a(uxiiiiiuaua{sv})"));
   g_variant_builder_init (&output_builder, G_VARIANT_TYPE ("a(uxiausauaua{sv})"));
   g_variant_builder_init (&mode_builder, G_VARIANT_TYPE ("a(uxuudu)"));
 
-  for (l = manager->crtcs, i = 0; l; l = l->next, i++)
+  for (l = combined_crtcs, i = 0; l; l = l->next, i++)
     {
       GfCrtc *crtc = l->data;
       GVariantBuilder transforms;
-      gint current_mode_index;
+      const GfCrtcConfig *crtc_config;
 
       g_variant_builder_init (&transforms, G_VARIANT_TYPE ("au"));
       for (j = 0; j <= GF_MONITOR_TRANSFORM_FLIPPED_270; j++)
-        if (crtc->all_transforms & (1 << j))
-          g_variant_builder_add (&transforms, "u", j);
+        {
+          if (gf_crtc_get_all_transforms (crtc) & (1 << j))
+            g_variant_builder_add (&transforms, "u", j);
+        }
 
-      if (crtc->current_mode)
-        current_mode_index = g_list_index (manager->modes, crtc->current_mode);
+      crtc_config = gf_crtc_get_config (crtc);
+
+      if (crtc_config != NULL)
+        {
+          int current_mode_index;
+
+          current_mode_index = g_list_index (combined_modes, crtc_config->mode);
+
+          g_variant_builder_add (&crtc_builder, "(uxiiiiiuaua{sv})",
+                                 i, /* ID */
+                                 (int64_t) gf_crtc_get_id (crtc),
+                                 crtc_config->layout.x,
+                                 crtc_config->layout.y,
+                                 crtc_config->layout.width,
+                                 crtc_config->layout.height,
+                                 current_mode_index,
+                                 (uint32_t) crtc_config->transform,
+                                 &transforms,
+                                 NULL /* properties */);
+        }
       else
-        current_mode_index = -1;
-
-      g_variant_builder_add (&crtc_builder, "(uxiiiiiuaua{sv})",
-                             i, /* ID */
-                             (gint64) crtc->crtc_id,
-                             (gint) crtc->rect.x,
-                             (gint) crtc->rect.y,
-                             (gint) crtc->rect.width,
-                             (gint) crtc->rect.height,
-                             current_mode_index,
-                             (guint32) crtc->transform,
-                             &transforms,
-                             NULL /* properties */);
+        {
+          g_variant_builder_add (&crtc_builder, "(uxiiiiiuaua{sv})",
+                                 i, /* ID */
+                                 (int64_t) gf_crtc_get_id (crtc),
+                                 0,
+                                 0,
+                                 0,
+                                 0,
+                                 -1,
+                                 (uint32_t) GF_MONITOR_TRANSFORM_NORMAL,
+                                 &transforms,
+                                 NULL /* properties */);
+        }
     }
 
-  for (l = manager->outputs, i = 0; l; l = l->next, i++)
+  for (l = combined_outputs, i = 0; l; l = l->next, i++)
     {
-      GfOutput *output = l->data;
+      GfOutput *output;
+      const GfOutputInfo *output_info;
       GVariantBuilder crtcs, modes, clones, properties;
       GBytes *edid;
-      gchar *edid_file;
-      gint crtc_index;
+      GfCrtc *crtc;
+      int crtc_index;
+      int backlight;
+      int min_backlight_step;
+      gboolean is_primary;
+      gboolean is_presentation;
+      const char *connector_type_name;
+      gboolean is_underscanning;
+      gboolean supports_underscanning;
+
+      output = l->data;
+      output_info = gf_output_get_info (output);
 
       g_variant_builder_init (&crtcs, G_VARIANT_TYPE ("au"));
-      for (j = 0; j < output->n_possible_crtcs; j++)
+      for (j = 0; j < output_info->n_possible_crtcs; j++)
         {
           GfCrtc *possible_crtc;
           guint possible_crtc_index;
 
-          possible_crtc = output->possible_crtcs[j];
-          possible_crtc_index = g_list_index (manager->crtcs, possible_crtc);
+          possible_crtc = output_info->possible_crtcs[j];
+          possible_crtc_index = g_list_index (combined_crtcs, possible_crtc);
 
           g_variant_builder_add (&crtcs, "u", possible_crtc_index);
         }
 
       g_variant_builder_init (&modes, G_VARIANT_TYPE ("au"));
-      for (j = 0; j < output->n_modes; j++)
+      for (j = 0; j < output_info->n_modes; j++)
         {
           guint mode_index;
 
-          mode_index = g_list_index (manager->modes, output->modes[j]);
+          mode_index = g_list_index (combined_modes, output_info->modes[j]);
           g_variant_builder_add (&modes, "u", mode_index);
 
         }
 
       g_variant_builder_init (&clones, G_VARIANT_TYPE ("au"));
-      for (j = 0; j < output->n_possible_clones; j++)
+      for (j = 0; j < output_info->n_possible_clones; j++)
         {
           guint possible_clone_index;
 
-          possible_clone_index = g_list_index (manager->outputs,
-                                               output->possible_clones[j]);
+          possible_clone_index = g_list_index (combined_outputs,
+                                               output_info->possible_clones[j]);
 
           g_variant_builder_add (&clones, "u", possible_clone_index);
         }
 
+      backlight = gf_output_get_backlight (output);
+      min_backlight_step =
+        output_info->backlight_max - output_info->backlight_min
+        ? 100 / (output_info->backlight_max - output_info->backlight_min)
+        : -1;
+      is_primary = gf_output_is_primary (output);
+      is_presentation = gf_output_is_presentation (output);
+      is_underscanning = gf_output_is_underscanning (output);
+      connector_type_name = get_connector_type_name (output_info->connector_type);
+      supports_underscanning = output_info->supports_underscanning;
+
       g_variant_builder_init (&properties, G_VARIANT_TYPE ("a{sv}"));
       g_variant_builder_add (&properties, "{sv}", "vendor",
-                             g_variant_new_string (output->vendor));
+                             g_variant_new_string (output_info->vendor));
       g_variant_builder_add (&properties, "{sv}", "product",
-                             g_variant_new_string (output->product));
+                             g_variant_new_string (output_info->product));
       g_variant_builder_add (&properties, "{sv}", "serial",
-                             g_variant_new_string (output->serial));
+                             g_variant_new_string (output_info->serial));
       g_variant_builder_add (&properties, "{sv}", "width-mm",
-                             g_variant_new_int32 (output->width_mm));
+                             g_variant_new_int32 (output_info->width_mm));
       g_variant_builder_add (&properties, "{sv}", "height-mm",
-                             g_variant_new_int32 (output->height_mm));
+                             g_variant_new_int32 (output_info->height_mm));
       g_variant_builder_add (&properties, "{sv}", "display-name",
-                             g_variant_new_take_string (make_display_name (manager, output)));
+                             g_variant_new_string (output_info->name));
       g_variant_builder_add (&properties, "{sv}", "backlight",
-                             g_variant_new_int32 (output->backlight));
+                             g_variant_new_int32 (backlight));
       g_variant_builder_add (&properties, "{sv}", "min-backlight-step",
-                             g_variant_new_int32 ((output->backlight_max - output->backlight_min) ?
-                                                  100 / (output->backlight_max - output->backlight_min) : -1));
+                             g_variant_new_int32 (min_backlight_step));
       g_variant_builder_add (&properties, "{sv}", "primary",
-                             g_variant_new_boolean (output->is_primary));
+                             g_variant_new_boolean (is_primary));
       g_variant_builder_add (&properties, "{sv}", "presentation",
-                             g_variant_new_boolean (output->is_presentation));
+                             g_variant_new_boolean (is_presentation));
       g_variant_builder_add (&properties, "{sv}", "connector-type",
-                             g_variant_new_string (get_connector_type_name (output->connector_type)));
+                             g_variant_new_string (connector_type_name));
       g_variant_builder_add (&properties, "{sv}", "underscanning",
-                             g_variant_new_boolean (output->is_underscanning));
+                             g_variant_new_boolean (is_underscanning));
       g_variant_builder_add (&properties, "{sv}", "supports-underscanning",
-                             g_variant_new_boolean (output->supports_underscanning));
+                             g_variant_new_boolean (supports_underscanning));
 
-      edid_file = manager_class->get_edid_file (manager, output);
-      if (edid_file)
-        {
-          g_variant_builder_add (&properties, "{sv}", "edid-file",
-                                 g_variant_new_take_string (edid_file));
-        }
-      else
-        {
-          edid = manager_class->read_edid (manager, output);
+      edid = manager_class->read_edid (manager, output);
 
-          if (edid)
-            {
-              g_variant_builder_add (&properties, "{sv}", "edid",
-                                     g_variant_new_from_bytes (G_VARIANT_TYPE ("ay"),
-                                                               edid, TRUE));
-              g_bytes_unref (edid);
-            }
+      if (edid)
+        {
+          g_variant_builder_add (&properties, "{sv}", "edid",
+                                 g_variant_new_from_bytes (G_VARIANT_TYPE ("ay"),
+                                                           edid, TRUE));
+          g_bytes_unref (edid);
         }
 
-      if (output->tile_info.group_id)
+      if (output_info->tile_info.group_id)
         {
-          g_variant_builder_add (&properties, "{sv}", "tile",
-                                 g_variant_new ("(uuuuuuuu)",
-                                                output->tile_info.group_id,
-                                                output->tile_info.flags,
-                                                output->tile_info.max_h_tiles,
-                                                output->tile_info.max_v_tiles,
-                                                output->tile_info.loc_h_tile,
-                                                output->tile_info.loc_v_tile,
-                                                output->tile_info.tile_w,
-                                                output->tile_info.tile_h));
+          GVariant *tile_variant;
+
+          tile_variant = g_variant_new ("(uuuuuuuu)",
+                                        output_info->tile_info.group_id,
+                                        output_info->tile_info.flags,
+                                        output_info->tile_info.max_h_tiles,
+                                        output_info->tile_info.max_v_tiles,
+                                        output_info->tile_info.loc_h_tile,
+                                        output_info->tile_info.loc_v_tile,
+                                        output_info->tile_info.tile_w,
+                                        output_info->tile_info.tile_h);
+
+          g_variant_builder_add (&properties, "{sv}", "tile", tile_variant);
         }
 
-      crtc_index = output->crtc ? g_list_index (manager->crtcs, output->crtc) : -1;
+      crtc = gf_output_get_assigned_crtc (output);
+      crtc_index = crtc ? g_list_index (combined_crtcs, crtc) : -1;
 
       g_variant_builder_add (&output_builder, "(uxiausauaua{sv})",
                              i, /* ID */
-                             (gint64) output->winsys_id,
+                             gf_output_get_id (output),
                              crtc_index,
                              &crtcs,
-                             output->name,
+                             gf_output_get_name (output),
                              &modes,
                              &clones,
                              &properties);
     }
 
-  for (l = manager->modes, i = 0; l; l = l->next, i++)
+  for (l = combined_modes, i = 0; l; l = l->next, i++)
     {
       GfCrtcMode *mode = l->data;
+      const GfCrtcModeInfo *crtc_mode_info;
+
+      crtc_mode_info = gf_crtc_mode_get_info (mode);
 
       g_variant_builder_add (&mode_builder, "(uxuudu)",
                              i, /* ID */
-                             (gint64) mode->mode_id,
-                             (guint32) mode->width,
-                             (guint32) mode->height,
-                             (gdouble) mode->refresh_rate,
-                             (guint32) mode->flags);
+                             (int64_t) gf_crtc_mode_get_id (mode),
+                             (uint32_t) crtc_mode_info->width,
+                             (uint32_t) crtc_mode_info->height,
+                             (double) crtc_mode_info->refresh_rate,
+                             (uint32_t) crtc_mode_info->flags);
     }
 
   if (!gf_monitor_manager_get_max_screen_size (manager,
@@ -1285,6 +1339,10 @@ gf_monitor_manager_handle_get_resources (GfDBusDisplayConfig   *skeleton,
                                                  g_variant_builder_end (&mode_builder),
                                                  max_screen_width, max_screen_height);
 
+  g_list_free (combined_modes);
+  g_list_free (combined_outputs);
+  g_list_free (combined_crtcs);
+
   return TRUE;
 }
 
@@ -1293,14 +1351,16 @@ gf_monitor_manager_handle_change_backlight (GfDBusDisplayConfig   *skeleton,
                                             GDBusMethodInvocation *invocation,
                                             guint                  serial,
                                             guint                  output_index,
-                                            gint                   value)
+                                            gint                   value,
+                                            GfMonitorManager      *manager)
 {
-  GfMonitorManager *manager;
   GfMonitorManagerClass *manager_class;
+  GList *combined_outputs;
   GfOutput *output;
+  const GfOutputInfo *output_info;
+  int new_backlight;
 
-  manager = GF_MONITOR_MANAGER (skeleton);
-  manager_class = GF_MONITOR_MANAGER_GET_CLASS (skeleton);
+  manager_class = GF_MONITOR_MANAGER_GET_CLASS (manager);
 
   if (serial != manager->serial)
     {
@@ -1310,15 +1370,20 @@ gf_monitor_manager_handle_change_backlight (GfDBusDisplayConfig   *skeleton,
       return TRUE;
     }
 
-  if (output_index >= g_list_length (manager->outputs))
+  combined_outputs = combine_gpu_lists (manager, gf_gpu_get_outputs);
+
+  if (output_index >= g_list_length (combined_outputs))
+
     {
+      g_list_free (combined_outputs);
       g_dbus_method_invocation_return_error (invocation, G_DBUS_ERROR,
                                              G_DBUS_ERROR_INVALID_ARGS,
                                              "Invalid output id");
       return TRUE;
     }
 
-  output = g_list_nth_data (manager->outputs, output_index);
+  output = g_list_nth_data (combined_outputs, output_index);
+  g_list_free (combined_outputs);
 
   if (value < 0 || value > 100)
     {
@@ -1328,8 +1393,11 @@ gf_monitor_manager_handle_change_backlight (GfDBusDisplayConfig   *skeleton,
       return TRUE;
     }
 
-  if (output->backlight == -1 ||
-      (output->backlight_min == 0 && output->backlight_max == 0))
+  output_info = gf_output_get_info (output);
+
+  if (gf_output_get_backlight (output) == -1 ||
+      (output_info->backlight_min == 0 &&
+       output_info->backlight_max == 0))
     {
       g_dbus_method_invocation_return_error (invocation, G_DBUS_ERROR,
                                              G_DBUS_ERROR_INVALID_ARGS,
@@ -1339,8 +1407,10 @@ gf_monitor_manager_handle_change_backlight (GfDBusDisplayConfig   *skeleton,
 
   manager_class->change_backlight (manager, output, value);
 
-  gf_dbus_display_config_complete_change_backlight (skeleton, invocation,
-                                                    output->backlight);
+  new_backlight = gf_output_get_backlight (output);
+  gf_dbus_display_config_complete_change_backlight (skeleton,
+                                                    invocation,
+                                                    new_backlight);
 
   return TRUE;
 }
@@ -1349,10 +1419,11 @@ static gboolean
 gf_monitor_manager_handle_get_crtc_gamma (GfDBusDisplayConfig   *skeleton,
                                           GDBusMethodInvocation *invocation,
                                           guint                  serial,
-                                          guint                  crtc_id)
+                                          guint                  crtc_id,
+                                          GfMonitorManager      *manager)
 {
-  GfMonitorManager *manager;
   GfMonitorManagerClass *manager_class;
+  GList *combined_crtcs;
   GfCrtc *crtc;
   gsize size;
   gushort *red;
@@ -1365,8 +1436,7 @@ gf_monitor_manager_handle_get_crtc_gamma (GfDBusDisplayConfig   *skeleton,
   GVariant *green_v;
   GVariant *blue_v;
 
-  manager = GF_MONITOR_MANAGER (skeleton);
-  manager_class = GF_MONITOR_MANAGER_GET_CLASS (skeleton);
+  manager_class = GF_MONITOR_MANAGER_GET_CLASS (manager);
 
   if (serial != manager->serial)
     {
@@ -1376,15 +1446,19 @@ gf_monitor_manager_handle_get_crtc_gamma (GfDBusDisplayConfig   *skeleton,
       return TRUE;
     }
 
-  if (crtc_id >= g_list_length (manager->crtcs))
+  combined_crtcs = combine_gpu_lists (manager, gf_gpu_get_crtcs);
+
+  if (crtc_id >= g_list_length (combined_crtcs))
     {
+      g_list_free (combined_crtcs);
       g_dbus_method_invocation_return_error (invocation, G_DBUS_ERROR,
                                              G_DBUS_ERROR_INVALID_ARGS,
                                              "Invalid crtc id");
       return TRUE;
     }
 
-  crtc = g_list_nth_data (manager->crtcs, crtc_id);
+  crtc = g_list_nth_data (combined_crtcs, crtc_id);
+  g_list_free (combined_crtcs);
 
   if (manager_class->get_crtc_gamma)
     {
@@ -1421,10 +1495,11 @@ gf_monitor_manager_handle_set_crtc_gamma (GfDBusDisplayConfig   *skeleton,
                                           guint                  crtc_id,
                                           GVariant              *red_v,
                                           GVariant              *green_v,
-                                          GVariant              *blue_v)
+                                          GVariant              *blue_v,
+                                          GfMonitorManager      *manager)
 {
-  GfMonitorManager *manager;
   GfMonitorManagerClass *manager_class;
+  GList *combined_crtcs;
   GfCrtc *crtc;
   GBytes *red_bytes;
   GBytes *green_bytes;
@@ -1434,8 +1509,7 @@ gf_monitor_manager_handle_set_crtc_gamma (GfDBusDisplayConfig   *skeleton,
   gushort *green;
   gushort *blue;
 
-  manager = GF_MONITOR_MANAGER (skeleton);
-  manager_class = GF_MONITOR_MANAGER_GET_CLASS (skeleton);
+  manager_class = GF_MONITOR_MANAGER_GET_CLASS (manager);
 
   if (serial != manager->serial)
     {
@@ -1445,15 +1519,19 @@ gf_monitor_manager_handle_set_crtc_gamma (GfDBusDisplayConfig   *skeleton,
       return TRUE;
     }
 
-  if (crtc_id >= g_list_length (manager->crtcs))
+  combined_crtcs = combine_gpu_lists (manager, gf_gpu_get_crtcs);
+
+  if (crtc_id >= g_list_length (combined_crtcs))
     {
+      g_list_free (combined_crtcs);
       g_dbus_method_invocation_return_error (invocation, G_DBUS_ERROR,
                                              G_DBUS_ERROR_INVALID_ARGS,
                                              "Invalid crtc id");
       return TRUE;
     }
 
-  crtc = g_list_nth_data (manager->crtcs, crtc_id);
+  crtc = g_list_nth_data (combined_crtcs, crtc_id);
+  g_list_free (combined_crtcs);
 
   red_bytes = g_variant_get_data_as_bytes (red_v);
   green_bytes = g_variant_get_data_as_bytes (green_v);
@@ -1488,18 +1566,22 @@ gf_monitor_manager_handle_set_crtc_gamma (GfDBusDisplayConfig   *skeleton,
 
 static gboolean
 gf_monitor_manager_handle_get_current_state (GfDBusDisplayConfig   *skeleton,
-                                             GDBusMethodInvocation *invocation)
+                                             GDBusMethodInvocation *invocation,
+                                             GfMonitorManager      *manager)
 {
-  GfMonitorManager *manager;
+  GfMonitorManagerPrivate *priv;
+  GfSettings *settings;
   GVariantBuilder monitors_builder;
   GVariantBuilder logical_monitors_builder;
   GVariantBuilder properties_builder;
   GList *l;
   GfMonitorManagerCapability capabilities;
+  gint ui_scaling_factor;
   gint max_screen_width;
   gint max_screen_height;
 
-  manager = GF_MONITOR_MANAGER (skeleton);
+  priv = gf_monitor_manager_get_instance_private (manager);
+  settings = gf_backend_get_settings (priv->backend);
 
   g_variant_builder_init (&monitors_builder, G_VARIANT_TYPE (MONITORS_FORMAT));
   g_variant_builder_init (&logical_monitors_builder, G_VARIANT_TYPE (LOGICAL_MONITORS_FORMAT));
@@ -1515,8 +1597,7 @@ gf_monitor_manager_handle_get_current_state (GfDBusDisplayConfig   *skeleton,
       GVariantBuilder monitor_properties_builder;
       GList *k;
       gboolean is_builtin;
-      GfOutput *main_output;
-      gchar *display_name;
+      const char *display_name;
       gint i;
 
       current_mode = gf_monitor_get_current_mode (monitor);
@@ -1536,9 +1617,13 @@ gf_monitor_manager_handle_get_current_state (GfDBusDisplayConfig   *skeleton,
           GVariantBuilder mode_properties_builder;
           GfCrtcModeFlag mode_flags;
 
+          if (!gf_monitor_mode_should_be_advertised (monitor_mode))
+            continue;
+
           mode_id = gf_monitor_mode_get_id (monitor_mode);
           gf_monitor_mode_get_resolution (monitor_mode,
                                           &mode_width, &mode_height);
+
           refresh_rate = gf_monitor_mode_get_refresh_rate (monitor_mode);
 
           preferred_scale =
@@ -1602,11 +1687,10 @@ gf_monitor_manager_handle_get_current_state (GfDBusDisplayConfig   *skeleton,
                              "is-builtin",
                              g_variant_new_boolean (is_builtin));
 
-      main_output = gf_monitor_get_main_output (monitor);
-      display_name = make_display_name (manager, main_output);
+      display_name = gf_monitor_get_display_name (monitor);
       g_variant_builder_add (&monitor_properties_builder, "{sv}",
                              "display-name",
-                             g_variant_new_take_string (display_name));
+                             g_variant_new_string (display_name));
 
       g_variant_builder_add (&monitors_builder, MONITOR_FORMAT,
                              monitor_spec->connector,
@@ -1651,12 +1735,6 @@ gf_monitor_manager_handle_get_current_state (GfDBusDisplayConfig   *skeleton,
     }
 
   capabilities = gf_monitor_manager_get_capabilities (manager);
-  if ((capabilities & GF_MONITOR_MANAGER_CAPABILITY_MIRRORING) == 0)
-    {
-      g_variant_builder_add (&properties_builder, "{sv}",
-                             "supports-mirroring",
-                             g_variant_new_boolean (FALSE));
-    }
 
   g_variant_builder_add (&properties_builder, "{sv}",
                          "layout-mode",
@@ -1674,6 +1752,10 @@ gf_monitor_manager_handle_get_current_state (GfDBusDisplayConfig   *skeleton,
                              "global-scale-required",
                              g_variant_new_boolean (TRUE));
     }
+
+  ui_scaling_factor = gf_settings_get_ui_scaling_factor (settings);
+  g_variant_builder_add (&properties_builder, "{sv}",
+                         "legacy-ui-scaling-factor",g_variant_new_int32 (ui_scaling_factor));
 
   if (gf_monitor_manager_get_max_screen_size (manager,
                                               &max_screen_width,
@@ -1716,9 +1798,9 @@ gf_monitor_manager_handle_apply_monitors_config (GfDBusDisplayConfig   *skeleton
                                                  guint                  serial,
                                                  guint                  method,
                                                  GVariant              *logical_monitor_configs_variant,
-                                                 GVariant              *properties_variant)
+                                                 GVariant              *properties_variant,
+                                                 GfMonitorManager      *manager)
 {
-  GfMonitorManager *manager;
   GfMonitorManagerCapability capabilities;
   GVariant *layout_mode_variant;
   GfLogicalMonitorLayoutMode layout_mode;
@@ -1726,8 +1808,6 @@ gf_monitor_manager_handle_apply_monitors_config (GfDBusDisplayConfig   *skeleton
   GList *logical_monitor_configs;
   GError *error;
   GfMonitorsConfig *config;
-
-  manager = GF_MONITOR_MANAGER (skeleton);
 
   if (serial != manager->serial)
     {
@@ -1858,14 +1938,26 @@ gf_monitor_manager_handle_apply_monitors_config (GfDBusDisplayConfig   *skeleton
 }
 
 static void
-gf_monitor_manager_display_config_init (GfDBusDisplayConfigIface *iface)
+monitor_manager_setup_dbus_config_handlers (GfMonitorManager *manager)
 {
-  iface->handle_get_resources = gf_monitor_manager_handle_get_resources;
-  iface->handle_change_backlight = gf_monitor_manager_handle_change_backlight;
-  iface->handle_get_crtc_gamma = gf_monitor_manager_handle_get_crtc_gamma;
-  iface->handle_set_crtc_gamma = gf_monitor_manager_handle_set_crtc_gamma;
-  iface->handle_get_current_state = gf_monitor_manager_handle_get_current_state;
-  iface->handle_apply_monitors_config = gf_monitor_manager_handle_apply_monitors_config;
+  g_signal_connect_object (manager->display_config, "handle-get-resources",
+                           G_CALLBACK (gf_monitor_manager_handle_get_resources),
+                           manager, 0);
+  g_signal_connect_object (manager->display_config, "handle-change-backlight",
+                           G_CALLBACK (gf_monitor_manager_handle_change_backlight),
+                           manager, 0);
+  g_signal_connect_object (manager->display_config, "handle-get-crtc-gamma",
+                           G_CALLBACK (gf_monitor_manager_handle_get_crtc_gamma),
+                           manager, 0);
+  g_signal_connect_object (manager->display_config, "handle-set-crtc-gamma",
+                           G_CALLBACK (gf_monitor_manager_handle_set_crtc_gamma),
+                           manager, 0);
+  g_signal_connect_object (manager->display_config, "handle-get-current-state",
+                           G_CALLBACK (gf_monitor_manager_handle_get_current_state),
+                           manager, 0);
+  g_signal_connect_object (manager->display_config, "handle-apply-monitors-config",
+                           G_CALLBACK (gf_monitor_manager_handle_apply_monitors_config),
+                           manager, 0);
 }
 
 static void
@@ -1875,13 +1967,24 @@ bus_acquired_cb (GDBusConnection *connection,
 {
   GfMonitorManager *manager;
   GDBusInterfaceSkeleton *skeleton;
+  GError *error;
+  gboolean exported;
 
   manager = GF_MONITOR_MANAGER (user_data);
-  skeleton = G_DBUS_INTERFACE_SKELETON (manager);
+  skeleton = G_DBUS_INTERFACE_SKELETON (manager->display_config);
 
-  g_dbus_interface_skeleton_export (skeleton, connection,
-                                    "/org/gnome/Mutter/DisplayConfig",
-                                    NULL);
+  error = NULL;
+  exported = g_dbus_interface_skeleton_export (skeleton,
+                                               connection,
+                                               "/org/gnome/Mutter/DisplayConfig",
+                                               &error);
+
+  if (!exported)
+    {
+      g_warning ("%s", error->message);
+      g_error_free (error);
+      return;
+    }
 }
 
 static void
@@ -1905,20 +2008,38 @@ gf_monitor_manager_real_read_edid (GfMonitorManager *manager,
   return NULL;
 }
 
-static gchar *
-gf_monitor_manager_real_get_edid_file (GfMonitorManager *manager,
-                                       GfOutput         *output)
-{
-  return NULL;
-}
-
 static gboolean
 gf_monitor_manager_real_is_lid_closed (GfMonitorManager *manager)
 {
   if (!manager->up_client)
     return FALSE;
 
-  return up_client_get_lid_is_closed (manager->up_client);
+  return manager->lid_is_closed;
+}
+
+static void
+gf_monitor_manager_real_read_current_state (GfMonitorManager *manager)
+{
+  GfMonitorManagerPrivate *priv;
+  GList *l;
+
+  priv = gf_monitor_manager_get_instance_private (manager);
+
+  manager->serial++;
+
+  for (l = gf_backend_get_gpus (priv->backend); l; l = l->next)
+    {
+      GfGpu *gpu = l->data;
+      GError *error = NULL;
+
+      if (!gf_gpu_read_current (gpu, &error))
+        {
+          g_warning ("Failed to read current KMS state: %s", error->message);
+          g_clear_error (&error);
+        }
+    }
+
+  rebuild_monitors (manager);
 }
 
 static void
@@ -1926,8 +2047,16 @@ lid_is_closed_changed (UpClient   *client,
                        GParamSpec *pspec,
                        gpointer    user_data)
 {
-  GfMonitorManager *manager = user_data;
+  GfMonitorManager *manager;
+  gboolean lid_is_closed;
 
+  manager = user_data;
+  lid_is_closed = up_client_get_lid_is_closed (manager->up_client);
+
+  if (lid_is_closed == manager->lid_is_closed)
+    return;
+
+  manager->lid_is_closed = lid_is_closed;
   gf_monitor_manager_ensure_configured (manager);
 }
 
@@ -1945,27 +2074,37 @@ gf_monitor_manager_constructed (GObject *object)
 
   G_OBJECT_CLASS (gf_monitor_manager_parent_class)->constructed (object);
 
+  manager->display_config = gf_dbus_display_config_skeleton_new ();
+  monitor_manager_setup_dbus_config_handlers (manager);
+
   if (manager_class->is_lid_closed == gf_monitor_manager_real_is_lid_closed)
     {
       manager->up_client = up_client_new ();
 
-      g_signal_connect_object (manager->up_client, "notify::lid-is-closed",
-                               G_CALLBACK (lid_is_closed_changed), manager, 0);
+      if (manager->up_client)
+        {
+          g_signal_connect_object (manager->up_client, "notify::lid-is-closed",
+                                   G_CALLBACK (lid_is_closed_changed), manager, 0);
+
+          manager->lid_is_closed = up_client_get_lid_is_closed (manager->up_client);
+        }
     }
 
-  g_signal_connect_object (manager, "notify::power-save-mode",
-                           G_CALLBACK (power_save_mode_changed), manager, 0);
+  g_signal_connect_object (manager->display_config, "notify::power-save-mode",
+                           G_CALLBACK (power_save_mode_changed), manager,
+                           G_CONNECT_SWAPPED);
 
   orientation_manager = gf_backend_get_orientation_manager (priv->backend);
   g_signal_connect_object (orientation_manager, "orientation-changed",
                            G_CALLBACK (orientation_changed), manager, 0);
 
+  g_signal_connect_object (orientation_manager,
+                           "notify::has-accelerometer",
+                           G_CALLBACK (update_panel_orientation_managed),
+                           manager,
+                           G_CONNECT_SWAPPED);
+
   manager->current_switch_config = GF_MONITOR_SWITCH_CONFIG_UNKNOWN;
-
-  manager->config_manager = gf_monitor_config_manager_new (manager);
-
-  gf_monitor_manager_read_current_state (manager);
-  manager_class->ensure_initial_config (manager);
 
   priv->bus_name_id = g_bus_own_name (G_BUS_TYPE_SESSION,
                                       "org.gnome.Mutter.DisplayConfig",
@@ -1976,8 +2115,6 @@ gf_monitor_manager_constructed (GObject *object)
                                       name_lost_cb,
                                       g_object_ref (manager),
                                       g_object_unref);
-
-  priv->in_init = FALSE;
 }
 
 static void
@@ -1995,6 +2132,7 @@ gf_monitor_manager_dispose (GObject *object)
       priv->bus_name_id = 0;
     }
 
+  g_clear_object (&manager->display_config);
   g_clear_object (&manager->config_manager);
   g_clear_object (&manager->up_client);
 
@@ -2009,10 +2147,6 @@ gf_monitor_manager_finalize (GObject *object)
   GfMonitorManager *manager;
 
   manager = GF_MONITOR_MANAGER (object);
-
-  g_list_free_full (manager->outputs, g_object_unref);
-  g_list_free_full (manager->modes, g_object_unref);
-  g_list_free_full (manager->crtcs, g_object_unref);
 
   g_list_free_full (manager->logical_monitors, g_object_unref);
 
@@ -2035,6 +2169,10 @@ gf_monitor_manager_get_property (GObject    *object,
     {
       case PROP_BACKEND:
         g_value_set_object (value, priv->backend);
+        break;
+
+      case PROP_PANEL_ORIENTATION_MANAGED:
+        g_value_set_boolean (value, manager->panel_orientation_managed);
         break;
 
       default:
@@ -2061,6 +2199,9 @@ gf_monitor_manager_set_property (GObject      *object,
         priv->backend = g_value_get_object (value);
         break;
 
+      case PROP_PANEL_ORIENTATION_MANAGED:
+        break;
+
       default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
         break;
@@ -2079,6 +2220,15 @@ gf_monitor_manager_install_properties (GObjectClass *object_class)
                          G_PARAM_CONSTRUCT_ONLY |
                          G_PARAM_STATIC_STRINGS);
 
+ manager_properties[PROP_PANEL_ORIENTATION_MANAGED] =
+    g_param_spec_boolean ("panel-orientation-managed",
+                          "Panel orientation managed",
+                          "Panel orientation is managed",
+                          FALSE,
+                          G_PARAM_READABLE |
+                          G_PARAM_EXPLICIT_NOTIFY |
+                          G_PARAM_STATIC_STRINGS);
+
   g_object_class_install_properties (object_class, LAST_PROP,
                                      manager_properties);
 }
@@ -2086,10 +2236,28 @@ gf_monitor_manager_install_properties (GObjectClass *object_class)
 static void
 gf_monitor_manager_install_signals (GObjectClass *object_class)
 {
+  manager_signals[MONITORS_CHANGED] =
+    g_signal_new ("monitors-changed",
+                  G_TYPE_FROM_CLASS (object_class),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL, NULL,
+                  G_TYPE_NONE, 0);
+
+  manager_signals[POWER_SAVE_MODE_CHANGED] =
+    g_signal_new ("power-save-mode-changed",
+                  G_TYPE_FROM_CLASS (object_class),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL, NULL,
+                  G_TYPE_NONE, 0);
+
   manager_signals[CONFIRM_DISPLAY_CHANGE] =
     g_signal_new ("confirm-display-change",
-                  G_TYPE_FROM_CLASS (object_class), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+                  G_TYPE_FROM_CLASS (object_class),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 0);
 }
 
 static void
@@ -2105,9 +2273,9 @@ gf_monitor_manager_class_init (GfMonitorManagerClass *manager_class)
   object_class->get_property = gf_monitor_manager_get_property;
   object_class->set_property = gf_monitor_manager_set_property;
 
-  manager_class->get_edid_file = gf_monitor_manager_real_get_edid_file;
   manager_class->read_edid = gf_monitor_manager_real_read_edid;
   manager_class->is_lid_closed = gf_monitor_manager_real_is_lid_closed;
+  manager_class->read_current_state = gf_monitor_manager_real_read_current_state;
 
   gf_monitor_manager_install_properties (object_class);
   gf_monitor_manager_install_signals (object_class);
@@ -2116,11 +2284,6 @@ gf_monitor_manager_class_init (GfMonitorManagerClass *manager_class)
 static void
 gf_monitor_manager_init (GfMonitorManager *manager)
 {
-  GfMonitorManagerPrivate *priv;
-
-  priv = gf_monitor_manager_get_instance_private (manager);
-
-  priv->in_init = TRUE;
 }
 
 GfBackend *
@@ -2131,6 +2294,25 @@ gf_monitor_manager_get_backend (GfMonitorManager *manager)
   priv = gf_monitor_manager_get_instance_private (manager);
 
   return priv->backend;
+}
+
+void
+gf_monitor_manager_setup (GfMonitorManager *manager)
+{
+  GfMonitorManagerPrivate *priv;
+  GfMonitorManagerClass *manager_class;
+
+  priv = gf_monitor_manager_get_instance_private (manager);
+  manager_class = GF_MONITOR_MANAGER_GET_CLASS (manager);
+
+  priv->in_init = TRUE;
+
+  manager->config_manager = gf_monitor_config_manager_new (manager);
+
+  gf_monitor_manager_read_current_state (manager);
+  manager_class->ensure_initial_config (manager);
+
+  priv->in_init = FALSE;
 }
 
 void
@@ -2196,28 +2378,28 @@ gf_monitor_manager_get_monitors (GfMonitorManager *manager)
   return manager->monitors;
 }
 
-GList *
-gf_monitor_manager_get_outputs (GfMonitorManager *manager)
+GfLogicalMonitor *
+gf_monitor_manager_get_primary_logical_monitor (GfMonitorManager *manager)
 {
-  return manager->outputs;
-}
-
-GList *
-gf_monitor_manager_get_crtcs (GfMonitorManager *manager)
-{
-  return manager->crtcs;
+  return manager->primary_logical_monitor;
 }
 
 gboolean
 gf_monitor_manager_has_hotplug_mode_update (GfMonitorManager *manager)
 {
+  GfMonitorManagerPrivate *priv;
+  GList *gpus;
   GList *l;
 
-  for (l = manager->outputs; l; l = l->next)
-    {
-      GfOutput *output = l->data;
+  priv = gf_monitor_manager_get_instance_private (manager);
 
-      if (output->hotplug_mode_update)
+  gpus = gf_backend_get_gpus (priv->backend);
+
+  for (l = gpus; l; l = l->next)
+    {
+      GfGpu *gpu = l->data;
+
+      if (gf_gpu_has_hotplug_mode_update (gpu))
         return TRUE;
     }
 
@@ -2227,26 +2409,7 @@ gf_monitor_manager_has_hotplug_mode_update (GfMonitorManager *manager)
 void
 gf_monitor_manager_read_current_state (GfMonitorManager *manager)
 {
-  GList *old_outputs;
-  GList *old_crtcs;
-  GList *old_modes;
-
-  /* Some implementations of read_current use the existing information
-   * we have available, so don't free the old configuration until after
-   * read_current finishes.
-   */
-  old_outputs = manager->outputs;
-  old_crtcs = manager->crtcs;
-  old_modes = manager->modes;
-
-  manager->serial++;
-  GF_MONITOR_MANAGER_GET_CLASS (manager)->read_current (manager);
-
-  rebuild_monitors (manager);
-
-  g_list_free_full (old_outputs, g_object_unref);
-  g_list_free_full (old_modes, g_object_unref);
-  g_list_free_full (old_crtcs, g_object_unref);
+  return GF_MONITOR_MANAGER_GET_CLASS (manager)->read_current_state (manager);
 }
 
 void
@@ -2257,6 +2420,7 @@ gf_monitor_manager_on_hotplug (GfMonitorManager *manager)
 
 gboolean
 gf_monitor_manager_get_monitor_matrix (GfMonitorManager *manager,
+                                       GfMonitor        *monitor,
                                        GfLogicalMonitor *logical_monitor,
                                        gfloat            matrix[6])
 {
@@ -2266,7 +2430,9 @@ gf_monitor_manager_get_monitor_matrix (GfMonitorManager *manager,
   if (!calculate_viewport_matrix (manager, logical_monitor, viewport))
     return FALSE;
 
+  /* Get transform corrected for LCD panel-orientation. */
   transform = logical_monitor->transform;
+  transform = gf_monitor_logical_to_crtc_transform (monitor, transform);
   multiply_matrix (viewport, transform_matrices[transform], matrix);
 
   return TRUE;
@@ -2390,6 +2556,7 @@ gf_monitor_manager_ensure_configured (GfMonitorManager *manager)
     }
 
   config = gf_monitor_config_manager_create_linear (manager->config_manager);
+
   if (config)
     {
       if (!gf_monitor_manager_apply_monitors_config (manager, config,
@@ -2427,9 +2594,14 @@ gf_monitor_manager_ensure_configured (GfMonitorManager *manager)
 done:
   if (!config)
     {
-      gf_monitor_manager_apply_monitors_config (manager, NULL,
-                                                fallback_method,
-                                                &error);
+      if (!gf_monitor_manager_apply_monitors_config (manager, NULL,
+                                                     fallback_method,
+                                                     &error))
+        {
+          g_warning ("%s", error->message);
+          g_clear_error (&error);
+        }
+
       return NULL;
     }
 
@@ -2442,6 +2614,11 @@ void
 gf_monitor_manager_update_logical_state_derived (GfMonitorManager *manager,
                                                  GfMonitorsConfig *config)
 {
+  if (config)
+    manager->current_switch_config = gf_monitors_config_get_switch_config (config);
+  else
+    manager->current_switch_config = GF_MONITOR_SWITCH_CONFIG_UNKNOWN;
+
   manager->layout_mode = GF_LOGICAL_MONITOR_LAYOUT_MODE_PHYSICAL;
 
   gf_monitor_manager_rebuild_logical_monitors_derived (manager, config);
@@ -2547,29 +2724,39 @@ gf_monitor_manager_get_config_manager (GfMonitorManager *manager)
   return manager->config_manager;
 }
 
-gint
-gf_monitor_manager_get_monitor_for_output (GfMonitorManager *manager,
-                                           guint             id)
+char *
+gf_monitor_manager_get_vendor_name (GfMonitorManager *manager,
+                                    const char       *vendor)
 {
-  GfOutput *output;
-  GList *l;
+  if (!manager->pnp_ids)
+    manager->pnp_ids = gnome_pnp_ids_new ();
 
-  g_return_val_if_fail (GF_IS_MONITOR_MANAGER (manager), -1);
-  g_return_val_if_fail (id < g_list_length (manager->outputs), -1);
+  return gnome_pnp_ids_get_pnp_id (manager->pnp_ids, vendor);
+}
 
-  output = g_list_nth_data (manager->outputs, id);
-  if (!output || !output->crtc)
-    return -1;
+GfPowerSave
+gf_monitor_manager_get_power_save_mode (GfMonitorManager *manager)
+{
+  GfMonitorManagerPrivate *priv;
 
-  for (l = manager->logical_monitors; l; l = l->next)
-    {
-      GfLogicalMonitor *logical_monitor = l->data;
+  priv = gf_monitor_manager_get_instance_private (manager);
 
-      if (gf_rectangle_contains_rect (&logical_monitor->rect, &output->crtc->rect))
-        return logical_monitor->number;
-    }
+  return priv->power_save_mode;
+}
 
-  return -1;
+void
+gf_monitor_manager_power_save_mode_changed (GfMonitorManager *manager,
+                                            GfPowerSave       mode)
+{
+  GfMonitorManagerPrivate *priv;
+
+  priv = gf_monitor_manager_get_instance_private (manager);
+
+  if (priv->power_save_mode == mode)
+    return;
+
+  priv->power_save_mode = mode;
+  g_signal_emit (manager, manager_signals[POWER_SAVE_MODE_CHANGED], 0);
 }
 
 gint
@@ -2584,11 +2771,7 @@ gf_monitor_manager_get_monitor_for_connector (GfMonitorManager *manager,
 
       if (gf_monitor_is_active (monitor) &&
           g_str_equal (connector, gf_monitor_get_connector (monitor)))
-        {
-          GfOutput *main_output = gf_monitor_get_main_output (monitor);
-
-          return main_output->crtc->logical_monitor->number;
-        }
+        return gf_monitor_get_logical_monitor (monitor)->number;
     }
 
   return -1;
@@ -2656,6 +2839,12 @@ gint
 gf_monitor_manager_get_display_configuration_timeout (void)
 {
   return DEFAULT_DISPLAY_CONFIGURATION_TIMEOUT;
+}
+
+gboolean
+gf_monitor_manager_get_panel_orientation_managed (GfMonitorManager *self)
+{
+  return self->panel_orientation_managed;
 }
 
 void

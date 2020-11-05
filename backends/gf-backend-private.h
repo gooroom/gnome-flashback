@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2014 Red Hat
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@
 
 #include "gf-backend.h"
 #include "gf-monitor-manager-private.h"
+#include "gf-monitor-manager-types-private.h"
 #include "gf-orientation-manager-private.h"
 #include "gf-settings-private.h"
 
@@ -37,9 +38,10 @@ struct _GfBackendClass
 {
   GObjectClass parent_class;
 
-  void               (* post_init)              (GfBackend *backend);
+  void               (* post_init)              (GfBackend  *backend);
 
-  GfMonitorManager * (* create_monitor_manager) (GfBackend *backend);
+  GfMonitorManager * (* create_monitor_manager) (GfBackend  *backend,
+                                                 GError    **error);
 };
 
 GfOrientationManager *gf_backend_get_orientation_manager (GfBackend *backend);
@@ -47,6 +49,11 @@ GfOrientationManager *gf_backend_get_orientation_manager (GfBackend *backend);
 GfSettings           *gf_backend_get_settings            (GfBackend *backend);
 
 void                  gf_backend_monitors_changed        (GfBackend *backend);
+
+void                  gf_backend_add_gpu                 (GfBackend *self,
+                                                          GfGpu     *gpu);
+
+GList                *gf_backend_get_gpus                (GfBackend *self);
 
 G_END_DECLS
 

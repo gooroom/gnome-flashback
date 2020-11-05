@@ -47,7 +47,7 @@ GType                 nd_notification_get_type            (void) G_GNUC_CONST;
 NdNotification *      nd_notification_new                 (const char     *sender);
 gboolean              nd_notification_update              (NdNotification     *notification,
                                                            const gchar        *app_name,
-                                                           const gchar        *icon,
+                                                           const gchar        *app_icon,
                                                            const gchar        *summary,
                                                            const gchar        *body,
                                                            const gchar *const *actions,
@@ -59,21 +59,18 @@ void                  nd_notification_set_is_queued       (NdNotification *notif
 gboolean              nd_notification_get_is_queued       (NdNotification *notification);
 
 gboolean              nd_notification_get_is_closed       (NdNotification *notification);
-void                  nd_notification_get_update_time     (NdNotification *notification,
-                                                           GTimeVal       *timeval);
+gint64                nd_notification_get_update_time     (NdNotification *notification);
 
 guint                 nd_notification_get_id              (NdNotification *notification);
 int                   nd_notification_get_timeout         (NdNotification *notification);
 const char *          nd_notification_get_sender          (NdNotification *notification);
 const char *          nd_notification_get_app_name        (NdNotification *notification);
-const char *          nd_notification_get_icon            (NdNotification *notification);
 const char *          nd_notification_get_summary         (NdNotification *notification);
 const char *          nd_notification_get_body            (NdNotification *notification);
 char **               nd_notification_get_actions         (NdNotification *notification);
-GHashTable *          nd_notification_get_hints           (NdNotification *notification);
 
-GdkPixbuf *           nd_notification_load_image          (NdNotification *notification,
-                                                           int             size);
+GIcon *               nd_notification_get_icon            (NdNotification *notification);
+
 gboolean              nd_notification_get_is_resident     (NdNotification *notification);
 gboolean              nd_notification_get_is_transient    (NdNotification *notification);
 gboolean              nd_notification_get_action_icons    (NdNotification *notification);

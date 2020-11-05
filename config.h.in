@@ -7,6 +7,9 @@
 /* Define the gettext package to be used */
 #undef GETTEXT_PACKAGE
 
+/* Define to 1 if alsa is available */
+#undef HAVE_ALSA
+
 /* Define to 1 if you have the Mac OS X function CFLocaleCopyCurrent in the
    CoreFoundation framework. */
 #undef HAVE_CFLOCALECOPYCURRENT
@@ -14,6 +17,9 @@
 /* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
    the CoreFoundation framework. */
 #undef HAVE_CFPREFERENCESCOPYAPPVALUE
+
+/* Define if built with compiz session support */
+#undef HAVE_COMPIZ_SESSION
 
 /* Define if the GNU dcgettext() function is already present or preinstalled.
    */
@@ -25,6 +31,9 @@
 /* Define if the GNU gettext() function is already present or preinstalled. */
 #undef HAVE_GETTEXT
 
+/* Define if gnome-desktop is 3.35.4 or newer */
+#undef HAVE_GNOME_DESKTOP_3_35_4
+
 /* Define if you have the iconv() function and it works. */
 #undef HAVE_ICONV
 
@@ -33,6 +42,12 @@
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
+
+/* Define if Pango is 1.44.0 or newer */
+#undef HAVE_PANGO144
+
+/* Define to 1 if you have the <security/pam_appl.h> header file. */
+#undef HAVE_SECURITY_PAM_APPL_H
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
@@ -54,9 +69,6 @@
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
-
-/* Define if XRandR is 1.5.0 or newer */
-#undef HAVE_XRANDR15
 
 /* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR

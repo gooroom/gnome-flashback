@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2014 Red Hat
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,10 +27,8 @@
 
 #include <gio/gio.h>
 
-#include "gf-backend-native-private.h"
 #include "gf-backend-x11-cm-private.h"
-#include "gf-backend-x11-nested-private.h"
-#include "gf-monitor-manager-dummy-private.h"
+#include "gf-gpu-private.h"
 #include "gf-orientation-manager-private.h"
 #include "gf-settings-private.h"
 
@@ -40,7 +38,18 @@ typedef struct
   GfOrientationManager *orientation_manager;
 
   GfMonitorManager     *monitor_manager;
+
+  GList                *gpus;
 } GfBackendPrivate;
+
+enum
+{
+  GPU_ADDED,
+
+  LAST_SIGNAL
+};
+
+static guint backend_signals[LAST_SIGNAL] = { 0 };
 
 static void
 initable_iface_init (GInitableIface *initable_iface);
@@ -51,16 +60,10 @@ G_DEFINE_ABSTRACT_TYPE_WITH_CODE (GfBackend, gf_backend, G_TYPE_OBJECT,
                                                          initable_iface_init))
 
 static GfMonitorManager *
-create_monitor_manager (GfBackend *backend)
+create_monitor_manager (GfBackend  *backend,
+                        GError    **error)
 {
-  if (g_getenv ("DUMMY_MONITORS"))
-    {
-      return g_object_new (GF_TYPE_MONITOR_MANAGER_DUMMY,
-                           "backend", backend,
-                           NULL);
-    }
-
-  return GF_BACKEND_GET_CLASS (backend)->create_monitor_manager (backend);
+  return GF_BACKEND_GET_CLASS (backend)->create_monitor_manager (backend, error);
 }
 
 static gboolean
@@ -76,6 +79,10 @@ gf_backend_initable_init (GInitable     *initable,
 
   priv->settings = gf_settings_new (backend);
   priv->orientation_manager = gf_orientation_manager_new ();
+
+  priv->monitor_manager = create_monitor_manager (backend, error);
+  if (!priv->monitor_manager)
+    return FALSE;
 
   return TRUE;
 }
@@ -103,13 +110,27 @@ gf_backend_dispose (GObject *object)
 }
 
 static void
+gf_backend_finalize (GObject *object)
+{
+  GfBackend *self;
+  GfBackendPrivate *priv;
+
+  self = GF_BACKEND (object);
+  priv = gf_backend_get_instance_private (self);
+
+  g_list_free_full (priv->gpus, g_object_unref);
+
+  G_OBJECT_CLASS (gf_backend_parent_class)->finalize (object);
+}
+
+static void
 gf_backend_real_post_init (GfBackend *backend)
 {
   GfBackendPrivate *priv;
 
   priv = gf_backend_get_instance_private (backend);
 
-  priv->monitor_manager = create_monitor_manager (backend);
+  gf_monitor_manager_setup (priv->monitor_manager);
 }
 
 static void
@@ -120,8 +141,21 @@ gf_backend_class_init (GfBackendClass *backend_class)
   object_class = G_OBJECT_CLASS (backend_class);
 
   object_class->dispose = gf_backend_dispose;
+  object_class->finalize = gf_backend_finalize;
 
   backend_class->post_init = gf_backend_real_post_init;
+
+  backend_signals[GPU_ADDED] =
+    g_signal_new ("gpu-added",
+                  G_TYPE_FROM_CLASS (backend_class),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL,
+                  NULL,
+                  NULL,
+                  G_TYPE_NONE,
+                  1,
+                  GF_TYPE_GPU);
 }
 
 static void
@@ -134,6 +168,7 @@ gf_backend_new (GfBackendType type)
 {
   GType gtype;
   GfBackend *backend;
+  GfBackendPrivate *priv;
   GError *error;
 
   switch (type)
@@ -142,20 +177,13 @@ gf_backend_new (GfBackendType type)
         gtype = GF_TYPE_BACKEND_X11_CM;
         break;
 
-      case GF_BACKEND_TYPE_X11_NESTED:
-        gtype = GF_TYPE_BACKEND_X11_NESTED;
-        break;
-
-      case GF_BACKEND_TYPE_NATIVE:
-        gtype = GF_TYPE_BACKEND_NATIVE;
-        break;
-
       default:
         g_assert_not_reached ();
         break;
     }
 
   backend = g_object_new (gtype, NULL);
+  priv = gf_backend_get_instance_private (backend);
 
   error = NULL;
   if (!g_initable_init (G_INITABLE (backend), NULL, &error))
@@ -169,6 +197,7 @@ gf_backend_new (GfBackendType type)
     }
 
   GF_BACKEND_GET_CLASS (backend)->post_init (backend);
+  gf_settings_post_init (priv->settings);
 
   return backend;
 }
@@ -206,4 +235,27 @@ gf_backend_get_settings (GfBackend *backend)
 void
 gf_backend_monitors_changed (GfBackend *backend)
 {
+}
+
+void
+gf_backend_add_gpu (GfBackend *self,
+                    GfGpu     *gpu)
+{
+  GfBackendPrivate *priv;
+
+  priv = gf_backend_get_instance_private (self);
+
+  priv->gpus = g_list_append (priv->gpus, gpu);
+
+  g_signal_emit (self, backend_signals[GPU_ADDED], 0, gpu);
+}
+
+GList *
+gf_backend_get_gpus (GfBackend *self)
+{
+  GfBackendPrivate *priv;
+
+  priv = gf_backend_get_instance_private (self);
+
+  return priv->gpus;
 }

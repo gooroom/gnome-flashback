@@ -37,9 +37,6 @@ typedef enum
 
 typedef struct _GfMonitorManager GfMonitorManager;
 
-gint                      gf_monitor_manager_get_monitor_for_output            (GfMonitorManager          *manager,
-                                                                                guint                      id);
-
 gint                      gf_monitor_manager_get_monitor_for_connector         (GfMonitorManager          *manager,
                                                                                 const gchar               *connector);
 
@@ -53,6 +50,8 @@ void                      gf_monitor_manager_switch_config                     (
                                                                                 GfMonitorSwitchConfigType  config_type);
 
 gint                      gf_monitor_manager_get_display_configuration_timeout (void);
+
+gboolean                  gf_monitor_manager_get_panel_orientation_managed     (GfMonitorManager          *self);
 
 void                      gf_monitor_manager_confirm_configuration             (GfMonitorManager          *manager,
                                                                                 gboolean                   ok);

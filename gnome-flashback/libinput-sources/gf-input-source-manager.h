@@ -22,9 +22,6 @@
 #include "gf-ibus-manager.h"
 #include "gf-input-source.h"
 
-#define INPUT_SOURCE_TYPE_XKB "xkb"
-#define INPUT_SOURCE_TYPE_IBUS "ibus"
-
 #define GF_TYPE_INPUT_SOURCE_MANAGER gf_input_source_manager_get_type ()
 G_DECLARE_FINAL_TYPE (GfInputSourceManager, gf_input_source_manager,
                       GF, INPUT_SOURCE_MANAGER, GObject)
@@ -36,5 +33,7 @@ void                  gf_input_source_manager_reload             (GfInputSourceM
 GfInputSource        *gf_input_source_manager_get_current_source (GfInputSourceManager *manager);
 
 GList                *gf_input_source_manager_get_input_sources  (GfInputSourceManager *manager);
+
+void                  gf_input_source_manager_activate_next_source (GfInputSourceManager *manager);
 
 #endif

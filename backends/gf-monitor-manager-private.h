@@ -3,7 +3,7 @@
  * Copyright (C) 2003 Rob Adams
  * Copyright (C) 2004-2006 Elijah Newren
  * Copyright (C) 2013 Red Hat Inc.
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@
 #include "gf-monitor-manager-enums-private.h"
 #include "gf-monitor-manager-types-private.h"
 #include "gf-monitor-manager.h"
+#include "gf-monitor-transform.h"
 
 G_BEGIN_DECLS
 
@@ -48,52 +49,43 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC (GfMonitorManager, g_object_unref)
 
 struct _GfMonitorManager
 {
-  GfDBusDisplayConfigSkeleton  parent;
+  GObject                      parent;
+
+  GfDBusDisplayConfig         *display_config;
 
   guint                        serial;
-
-  GfPowerSave                  power_save_mode;
 
   GfLogicalMonitorLayoutMode   layout_mode;
 
   gint                         screen_width;
   gint                         screen_height;
 
-  /* Outputs refer to physical screens,
-   * CRTCs refer to stuff that can drive outputs
-   * (like encoders, but less tied to the HW),
-   * while logical_monitors refer to logical ones.
-   */
-  GList                       *outputs;
-  GList                       *crtcs;
-  GList                       *modes;
-
   GList                       *monitors;
 
   GList                       *logical_monitors;
   GfLogicalMonitor            *primary_logical_monitor;
 
+  gboolean                     panel_orientation_managed;
+
   GfMonitorConfigManager      *config_manager;
 
   GnomePnpIds                 *pnp_ids;
   UpClient                    *up_client;
+  gboolean                     lid_is_closed;
 
   GfMonitorSwitchConfigType    current_switch_config;
 };
 
 typedef struct
 {
-  GfDBusDisplayConfigSkeletonClass parent_class;
-
-  void                         (* read_current)                 (GfMonitorManager            *manager);
-
-  gchar                      * (* get_edid_file)                (GfMonitorManager            *manager,
-                                                                 GfOutput                    *output);
+  GObjectClass parent_class;
 
   GBytes                     * (* read_edid)                    (GfMonitorManager            *manager,
                                                                  GfOutput                    *output);
 
   gboolean                     (* is_lid_closed)                (GfMonitorManager            *manager);
+
+  void                         (* read_current_state)           (GfMonitorManager            *manager);
 
   void                         (* ensure_initial_config)        (GfMonitorManager            *manager);
 
@@ -156,6 +148,8 @@ GType                       gf_monitor_manager_get_type                     (voi
 
 GfBackend                  *gf_monitor_manager_get_backend                  (GfMonitorManager            *manager);
 
+void                        gf_monitor_manager_setup                        (GfMonitorManager            *manager);
+
 void                        gf_monitor_manager_rebuild_derived              (GfMonitorManager            *manager,
                                                                              GfMonitorsConfig            *config);
 
@@ -170,15 +164,14 @@ GfMonitor                  *gf_monitor_manager_get_monitor_from_spec        (GfM
 
 GList                      *gf_monitor_manager_get_monitors                 (GfMonitorManager            *manager);
 
-GList                      *gf_monitor_manager_get_outputs                  (GfMonitorManager            *manager);
-
-GList                      *gf_monitor_manager_get_crtcs                    (GfMonitorManager            *manager);
+GfLogicalMonitor           *gf_monitor_manager_get_primary_logical_monitor  (GfMonitorManager            *manager);
 
 gboolean                    gf_monitor_manager_has_hotplug_mode_update      (GfMonitorManager            *manager);
 void                        gf_monitor_manager_read_current_state           (GfMonitorManager            *manager);
 void                        gf_monitor_manager_on_hotplug                   (GfMonitorManager            *manager);
 
 gboolean                    gf_monitor_manager_get_monitor_matrix           (GfMonitorManager            *manager,
+                                                                             GfMonitor                   *monitor,
                                                                              GfLogicalMonitor            *logical_monitor,
                                                                              gfloat                       matrix[6]);
 
@@ -225,11 +218,13 @@ GfLogicalMonitorLayoutMode  gf_monitor_manager_get_default_layout_mode      (GfM
 
 GfMonitorConfigManager     *gf_monitor_manager_get_config_manager           (GfMonitorManager            *manager);
 
-static inline gboolean
-gf_monitor_transform_is_rotated (GfMonitorTransform transform)
-{
-  return (transform % 2);
-}
+char                       *gf_monitor_manager_get_vendor_name              (GfMonitorManager            *manager,
+                                                                             const char                  *vendor);
+
+GfPowerSave                 gf_monitor_manager_get_power_save_mode          (GfMonitorManager            *manager);
+
+void                        gf_monitor_manager_power_save_mode_changed      (GfMonitorManager            *manager,
+                                                                             GfPowerSave                  mode);
 
 G_END_DECLS
 

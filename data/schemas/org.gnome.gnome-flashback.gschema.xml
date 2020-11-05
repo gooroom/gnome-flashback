@@ -17,16 +17,14 @@
       <description>If set to true, then GNOME Flashback application will be used to automount removable media.</description>
     </key>
 
-    <key name="bluetooth-applet" type="b">
+    <key name="clipboard" type="b">
       <default>true</default>
-      <summary>Bluetooth applet</summary>
-      <description>If set to true, then GNOME Flashback application will be used to show a Bluetooth applet.</description>
+      <summary>Clipboard</summary>
     </key>
 
-    <key name="desktop-background" type="b">
+    <key name="desktop" type="b">
       <default>true</default>
-      <summary>Desktop background</summary>
-      <description>If set to true, then GNOME Flashback application will be used to draw the desktop background.</description>
+      <summary>Desktop</summary>
     </key>
 
     <key name="end-session-dialog" type="b">
@@ -64,10 +62,9 @@
       <description>This is the same authentication agent that was provided by PolicyKit-gnome.</description>
     </key>
 
-    <key name="power-applet" type="b">
-      <default>true</default>
-      <summary>Power applet</summary>
-      <description>If set to true, then GNOME Flashback application will be used to show a power applet.</description>
+    <key name="root-background" type="b">
+      <default>false</default>
+      <summary>Root background</summary>
     </key>
 
     <key name="screencast" type="b">
@@ -94,22 +91,12 @@
       <description>If set to true, then GNOME Flashback application will be used as a shell.</description>
     </key>
 
-    <key name="sound-applet" type="b">
-      <default>true</default>
-      <summary>Sound applet</summary>
-      <description>If set to true, then GNOME Flashback application will be used to show a sound applet. This is the same sound applet that used to be a part of GNOME Control Center.</description>
-    </key>
-
     <key name="status-notifier-watcher" type="b">
       <default>true</default>
       <summary>Status Notifier Watcher</summary>
       <description>If set to true, then GNOME Flashback application will be used as Status Notifier Watcher.</description>
     </key>
 
-    <key name="workarounds" type="b">
-      <default>true</default>
-      <summary>Workarounds</summary>
-      <description>If set to true, then GNOME Flashback application will use workarounds to fix bugs.</description>
-    </key>
+    <child schema="org.gnome.gnome-flashback.desktop" name="desktop" />
   </schema>
 </schemalist>

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Red Hat
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,10 +21,12 @@
 
 #include "config.h"
 
+#include <glib/gi18n-lib.h>
 #include <math.h>
 #include <string.h>
 
 #include "gf-crtc-private.h"
+#include "gf-gpu-private.h"
 #include "gf-monitor-manager-private.h"
 #include "gf-monitor-private.h"
 #include "gf-monitor-spec-private.h"
@@ -34,8 +36,7 @@
 #define SCALE_FACTORS_PER_INTEGER 4
 #define MINIMUM_SCALE_FACTOR 1.0f
 #define MAXIMUM_SCALE_FACTOR 4.0f
-#define MINIMUM_LOGICAL_WIDTH 800
-#define MINIMUM_LOGICAL_HEIGHT 480
+#define MINIMUM_LOGICAL_AREA (800 * 480)
 #define MAXIMUM_REFRESH_RATE_DIFF 0.001f
 
 /* The minimum screen height at which we turn on a window-scale of 2;
@@ -52,7 +53,7 @@
 
 typedef struct
 {
-  GfMonitorManager *monitor_manager;
+  GfGpu            *gpu;
 
   GList            *outputs;
   GList            *modes;
@@ -62,6 +63,8 @@ typedef struct
   GfMonitorMode    *current_mode;
 
   GfMonitorSpec    *spec;
+
+  GfLogicalMonitor *logical_monitor;
 
   /*
    * The primary or first output for this monitor, 0 if we can't figure out.
@@ -73,13 +76,15 @@ typedef struct
    * the primary one).
    */
   glong             winsys_id;
+
+  char             *display_name;
 } GfMonitorPrivate;
 
 enum
 {
   PROP_0,
 
-  PROP_MONITOR_MANAGER,
+  PROP_GPU,
 
   LAST_PROP
 };
@@ -87,6 +92,124 @@ enum
 static GParamSpec *monitor_properties[LAST_PROP] = { NULL };
 
 G_DEFINE_TYPE_WITH_PRIVATE (GfMonitor, gf_monitor, G_TYPE_OBJECT)
+
+static const gdouble known_diagonals[] =
+  {
+    12.1,
+    13.3,
+    15.6
+  };
+
+static gchar *
+diagonal_to_str (gdouble d)
+{
+  guint i;
+
+  for (i = 0; i < G_N_ELEMENTS (known_diagonals); i++)
+    {
+      gdouble delta;
+
+      delta = fabs(known_diagonals[i] - d);
+
+      if (delta < 0.1)
+        return g_strdup_printf ("%0.1lf\"", known_diagonals[i]);
+    }
+
+  return g_strdup_printf ("%d\"", (int) (d + 0.5));
+}
+
+static gchar *
+make_display_name (GfMonitor        *monitor,
+                   GfMonitorManager *manager)
+{
+  gchar *inches;
+  gchar *vendor_name;
+  const char *vendor;
+  const char *product_name;
+  int width_mm;
+  int height_mm;
+
+  if (gf_monitor_is_laptop_panel (monitor))
+    return g_strdup (_("Built-in display"));
+
+  inches = NULL;
+  vendor_name = NULL;
+  vendor = gf_monitor_get_vendor (monitor);
+  product_name = NULL;
+
+  gf_monitor_get_physical_dimensions (monitor, &width_mm, &height_mm);
+
+  if (width_mm > 0 && height_mm > 0)
+    {
+      if (!gf_monitor_has_aspect_as_size (monitor))
+        {
+          double d;
+
+          d = sqrt (width_mm * width_mm + height_mm * height_mm);
+          inches = diagonal_to_str (d / 25.4);
+        }
+      else
+        {
+          product_name = gf_monitor_get_product (monitor);
+        }
+    }
+
+  if (g_strcmp0 (vendor, "unknown") != 0)
+    {
+      vendor_name = gf_monitor_manager_get_vendor_name (manager, vendor);
+
+      if (!vendor_name)
+        vendor_name = g_strdup (vendor);
+    }
+  else
+    {
+      if (inches != NULL)
+        vendor_name = g_strdup (_("Unknown"));
+      else
+        vendor_name = g_strdup (_("Unknown Display"));
+    }
+
+  if (inches != NULL)
+    {
+      gchar *display_name;
+
+      display_name = g_strdup_printf (C_("This is a monitor vendor name, followed by a "
+                                         "size in inches, like 'Dell 15\"'",
+                                         "%s %s"), vendor_name, inches);
+
+      g_free (vendor_name);
+      g_free (inches);
+
+      return display_name;
+    }
+  else if (product_name != NULL)
+    {
+      gchar *display_name;
+
+      display_name =  g_strdup_printf (C_("This is a monitor vendor name followed by "
+                                          "product/model name where size in inches "
+                                          "could not be calculated, e.g. Dell U2414H",
+                                          "%s %s"), vendor_name, product_name);
+
+      g_free (vendor_name);
+
+      return display_name;
+    }
+
+  return vendor_name;
+}
+
+static gboolean
+is_current_mode_known (GfMonitor *monitor)
+{
+  GfOutput *output;
+  GfCrtc *crtc;
+
+  output = gf_monitor_get_main_output (monitor);
+  crtc = gf_output_get_assigned_crtc (output);
+
+  return gf_monitor_is_active (monitor) == (crtc && gf_crtc_get_config (crtc));
+}
 
 static gboolean
 gf_monitor_mode_spec_equals (GfMonitorModeSpec *spec,
@@ -152,10 +275,7 @@ calculate_scale (GfMonitor     *monitor,
   /* Somebody encoded the aspect ratio (16/9 or 16/10) instead of the
    * physical size.
    */
-  if ((width_mm == 160 && height_mm == 90) ||
-      (width_mm == 160 && height_mm == 100) ||
-      (width_mm == 16 && height_mm == 9) ||
-      (width_mm == 16 && height_mm == 10))
+  if (gf_monitor_has_aspect_as_size (monitor))
     goto out;
 
   if (width_mm > 0 && height_mm > 0)
@@ -175,6 +295,13 @@ calculate_scale (GfMonitor     *monitor,
 
 out:
   return scale;
+}
+
+static gboolean
+is_logical_size_large_enough (gint width,
+                              gint height)
+{
+  return width * height >= MINIMUM_LOGICAL_AREA;
 }
 
 static gfloat
@@ -197,8 +324,7 @@ get_closest_scale_factor_for_resolution (gfloat width,
 
   if (scale < MINIMUM_SCALE_FACTOR ||
       scale > MAXIMUM_SCALE_FACTOR ||
-      floorf (scaled_w) < MINIMUM_LOGICAL_WIDTH ||
-      floorf (scaled_h) < MINIMUM_LOGICAL_HEIGHT)
+      !is_logical_size_large_enough (floorf (scaled_w), floorf (scaled_h)))
     goto out;
 
   if (floorf (scaled_w) == scaled_w && floorf (scaled_h) == scaled_h)
@@ -248,6 +374,24 @@ out:
 }
 
 static void
+gf_monitor_dispose (GObject *object)
+{
+  GfMonitor *monitor;
+  GfMonitorPrivate *priv;
+
+  monitor = GF_MONITOR (object);
+  priv = gf_monitor_get_instance_private (monitor);
+
+  if (priv->outputs)
+    {
+      g_list_free_full (priv->outputs, g_object_unref);
+      priv->outputs = NULL;
+    }
+
+  G_OBJECT_CLASS (gf_monitor_parent_class)->dispose (object);
+}
+
+static void
 gf_monitor_finalize (GObject *object)
 {
   GfMonitor *monitor;
@@ -258,8 +402,8 @@ gf_monitor_finalize (GObject *object)
 
   g_hash_table_destroy (priv->mode_ids);
   g_list_free_full (priv->modes, (GDestroyNotify) gf_monitor_mode_free);
-  g_clear_pointer (&priv->outputs, g_list_free);
   gf_monitor_spec_free (priv->spec);
+  g_free (priv->display_name);
 
   G_OBJECT_CLASS (gf_monitor_parent_class)->finalize (object);
 }
@@ -278,8 +422,8 @@ gf_monitor_get_property (GObject    *object,
 
   switch (property_id)
     {
-      case PROP_MONITOR_MANAGER:
-        g_value_set_object (value, priv->monitor_manager);
+      case PROP_GPU:
+        g_value_set_object (value, priv->gpu);
         break;
 
       default:
@@ -302,8 +446,8 @@ gf_monitor_set_property (GObject      *object,
 
   switch (property_id)
     {
-      case PROP_MONITOR_MANAGER:
-        priv->monitor_manager = g_value_get_object (value);
+      case PROP_GPU:
+        priv->gpu = g_value_get_object (value);
         break;
 
       default:
@@ -315,11 +459,11 @@ gf_monitor_set_property (GObject      *object,
 static void
 gf_monitor_install_properties (GObjectClass *object_class)
 {
-  monitor_properties[PROP_MONITOR_MANAGER] =
-    g_param_spec_object ("monitor-manager",
-                         "GfMonitorManager",
-                         "GfMonitorManager",
-                         GF_TYPE_MONITOR_MANAGER,
+  monitor_properties[PROP_GPU] =
+    g_param_spec_object ("gpu",
+                         "GfGpu",
+                         "GfGpu",
+                         GF_TYPE_GPU,
                          G_PARAM_READWRITE |
                          G_PARAM_STATIC_STRINGS |
                          G_PARAM_CONSTRUCT_ONLY);
@@ -335,6 +479,7 @@ gf_monitor_class_init (GfMonitorClass *monitor_class)
 
   object_class = G_OBJECT_CLASS (monitor_class);
 
+  object_class->dispose = gf_monitor_dispose;
   object_class->finalize = gf_monitor_finalize;
   object_class->get_property = gf_monitor_get_property;
   object_class->set_property = gf_monitor_set_property;
@@ -352,14 +497,40 @@ gf_monitor_init (GfMonitor *monitor)
   priv->mode_ids = g_hash_table_new (g_str_hash, g_str_equal);
 }
 
-GfMonitorManager *
-gf_monitor_get_monitor_manager (GfMonitor *monitor)
+GfGpu *
+gf_monitor_get_gpu (GfMonitor *monitor)
 {
   GfMonitorPrivate *priv;
 
   priv = gf_monitor_get_instance_private (monitor);
 
-  return priv->monitor_manager;
+  return priv->gpu;
+}
+
+void
+gf_monitor_make_display_name (GfMonitor *monitor)
+{
+  GfMonitorPrivate *priv;
+  GfBackend *backend;
+  GfMonitorManager *manager;
+
+  priv = gf_monitor_get_instance_private (monitor);
+
+  backend = gf_gpu_get_backend (priv->gpu);
+  manager = gf_backend_get_monitor_manager (backend);
+
+  g_free (priv->display_name);
+  priv->display_name = make_display_name (monitor, manager);
+}
+
+const char *
+gf_monitor_get_display_name (GfMonitor *monitor)
+{
+  GfMonitorPrivate *priv;
+
+  priv = gf_monitor_get_instance_private (monitor);
+
+  return priv->display_name;
 }
 
 gboolean
@@ -374,14 +545,21 @@ gf_monitor_is_mode_assigned (GfMonitor     *monitor,
 
   for (l = priv->outputs, i = 0; l; l = l->next, i++)
     {
-      GfOutput *output = l->data;
-      GfMonitorCrtcMode *monitor_crtc_mode = &mode->crtc_modes[i];
+      GfOutput *output;
+      GfMonitorCrtcMode *monitor_crtc_mode;
+      GfCrtc *crtc;
+      const GfCrtcConfig *crtc_config;
+
+      output = l->data;
+      monitor_crtc_mode = &mode->crtc_modes[i];
+      crtc = gf_output_get_assigned_crtc (output);
+      crtc_config = crtc ? gf_crtc_get_config (crtc) : NULL;
 
       if (monitor_crtc_mode->crtc_mode &&
-          (!output->crtc ||
-           output->crtc->current_mode != monitor_crtc_mode->crtc_mode))
+          (!crtc || !crtc_config ||
+           crtc_config->mode != monitor_crtc_mode->crtc_mode))
         return FALSE;
-      else if (!monitor_crtc_mode->crtc_mode && output->crtc)
+      else if (!monitor_crtc_mode->crtc_mode && crtc)
         return FALSE;
     }
 
@@ -396,7 +574,7 @@ gf_monitor_append_output (GfMonitor *monitor,
 
   priv = gf_monitor_get_instance_private (monitor);
 
-  priv->outputs = g_list_append (priv->outputs, output);
+  priv->outputs = g_list_append (priv->outputs, g_object_ref (output));
 }
 
 void
@@ -421,22 +599,62 @@ gf_monitor_set_preferred_mode (GfMonitor     *monitor,
   priv->preferred_mode = mode;
 }
 
+GfMonitorModeSpec
+gf_monitor_create_spec (GfMonitor  *monitor,
+                        int         width,
+                        int         height,
+                        GfCrtcMode *crtc_mode)
+{
+  const GfOutputInfo *output_info;
+  const GfCrtcModeInfo *crtc_mode_info;
+  GfMonitorModeSpec spec;
+
+  output_info = gf_monitor_get_main_output_info (monitor);
+  crtc_mode_info = gf_crtc_mode_get_info (crtc_mode);
+
+  if (gf_monitor_transform_is_rotated (output_info->panel_orientation_transform))
+    {
+      int temp;
+
+      temp = width;
+      width = height;
+      height = temp;
+    }
+
+  spec.width = width;
+  spec.height = height;
+  spec.refresh_rate = crtc_mode_info->refresh_rate;
+  spec.flags = crtc_mode_info->flags & HANDLED_CRTC_MODE_FLAGS;
+
+  return spec;
+}
+
+const GfOutputInfo *
+gf_monitor_get_main_output_info (GfMonitor *self)
+{
+  GfOutput *output;
+
+  output = gf_monitor_get_main_output (self);
+
+  return gf_output_get_info (output);
+}
+
 void
 gf_monitor_generate_spec (GfMonitor *monitor)
 {
   GfMonitorPrivate *priv;
-  GfOutput *output;
+  const GfOutputInfo *output_info;
   GfMonitorSpec *monitor_spec;
 
   priv = gf_monitor_get_instance_private (monitor);
-  output = gf_monitor_get_main_output (monitor);
+  output_info = gf_monitor_get_main_output_info (monitor);
 
   monitor_spec = g_new0 (GfMonitorSpec, 1);
 
-  monitor_spec->connector = g_strdup (output->name);
-  monitor_spec->vendor = g_strdup (output->vendor);
-  monitor_spec->product = g_strdup (output->product);
-  monitor_spec->serial = g_strdup (output->serial);
+  monitor_spec->connector = g_strdup (output_info->name);
+  monitor_spec->vendor = g_strdup (output_info->vendor);
+  monitor_spec->product = g_strdup (output_info->product);
+  monitor_spec->serial = g_strdup (output_info->serial);
 
   priv->spec = monitor_spec;
 }
@@ -500,11 +718,11 @@ gf_monitor_get_spec (GfMonitor *monitor)
 gboolean
 gf_monitor_is_active (GfMonitor *monitor)
 {
-  GfOutput *output;
+  GfMonitorPrivate *priv;
 
-  output = gf_monitor_get_main_output (monitor);
+  priv = gf_monitor_get_instance_private (monitor);
 
-  return output->crtc && output->crtc->current_mode;
+  return !!priv->current_mode;
 }
 
 GfOutput *
@@ -520,17 +738,17 @@ gf_monitor_is_primary (GfMonitor *monitor)
 
   output = gf_monitor_get_main_output (monitor);
 
-  return output->is_primary;
+  return gf_output_is_primary (output);
 }
 
 gboolean
 gf_monitor_supports_underscanning (GfMonitor *monitor)
 {
-  GfOutput *output;
+  const GfOutputInfo *output_info;
 
-  output = gf_monitor_get_main_output (monitor);
+  output_info = gf_monitor_get_main_output_info (monitor);
 
-  return output->supports_underscanning;
+  return output_info->supports_underscanning;
 }
 
 gboolean
@@ -540,17 +758,17 @@ gf_monitor_is_underscanning (GfMonitor *monitor)
 
   output = gf_monitor_get_main_output (monitor);
 
-  return output->is_underscanning;
+  return gf_output_is_underscanning (output);
 }
 
 gboolean
 gf_monitor_is_laptop_panel (GfMonitor *monitor)
 {
-  GfOutput *output;
+  const GfOutputInfo *output_info;
 
-  output = gf_monitor_get_main_output (monitor);
+  output_info = gf_monitor_get_main_output_info (monitor);
 
-  switch (output->connector_type)
+  switch (output_info->connector_type)
     {
       case GF_CONNECTOR_TYPE_eDP:
       case GF_CONNECTOR_TYPE_LVDS:
@@ -624,57 +842,84 @@ gf_monitor_get_physical_dimensions (GfMonitor *monitor,
                                     gint      *width_mm,
                                     gint      *height_mm)
 {
-  GfOutput *output;
+  const GfOutputInfo *output_info;
 
-  output = gf_monitor_get_main_output (monitor);
+  output_info = gf_monitor_get_main_output_info (monitor);
 
-  *width_mm = output->width_mm;
-  *height_mm = output->height_mm;
+  *width_mm = output_info->width_mm;
+  *height_mm = output_info->height_mm;
 }
 
 const gchar *
 gf_monitor_get_connector (GfMonitor *monitor)
 {
-  GfOutput *output;
+  const GfOutputInfo *output_info;
 
-  output = gf_monitor_get_main_output (monitor);
-  return output->name;
+  output_info = gf_monitor_get_main_output_info (monitor);
+
+  return output_info->name;
 }
 
 const gchar *
 gf_monitor_get_vendor (GfMonitor *monitor)
 {
-  GfOutput *output;
+  const GfOutputInfo *output_info;
 
-  output = gf_monitor_get_main_output (monitor);
-  return output->vendor;
+  output_info = gf_monitor_get_main_output_info (monitor);
+
+  return output_info->vendor;
 }
 
 const gchar *
 gf_monitor_get_product (GfMonitor *monitor)
 {
-  GfOutput *output;
+  const GfOutputInfo *output_info;
 
-  output = gf_monitor_get_main_output (monitor);
-  return output->product;
+  output_info = gf_monitor_get_main_output_info (monitor);
+
+  return output_info->product;
 }
 
 const gchar *
 gf_monitor_get_serial (GfMonitor *monitor)
 {
-  GfOutput *output;
+  const GfOutputInfo *output_info;
 
-  output = gf_monitor_get_main_output (monitor);
-  return output->serial;
+  output_info = gf_monitor_get_main_output_info (monitor);
+
+  return output_info->serial;
 }
 
 GfConnectorType
 gf_monitor_get_connector_type (GfMonitor *monitor)
 {
+  const GfOutputInfo *output_info;
+
+  output_info = gf_monitor_get_main_output_info (monitor);
+
+  return output_info->connector_type;
+}
+
+GfMonitorTransform
+gf_monitor_logical_to_crtc_transform (GfMonitor          *monitor,
+                                      GfMonitorTransform  transform)
+{
   GfOutput *output;
 
   output = gf_monitor_get_main_output (monitor);
-  return output->connector_type;
+
+  return gf_output_logical_to_crtc_transform (output, transform);
+}
+
+GfMonitorTransform
+gf_monitor_crtc_to_logical_transform (GfMonitor          *monitor,
+                                      GfMonitorTransform  transform)
+{
+  GfOutput *output;
+
+  output = gf_monitor_get_main_output (monitor);
+
+  return gf_output_crtc_to_logical_transform (output, transform);
 }
 
 gboolean
@@ -688,12 +933,11 @@ gf_monitor_get_suggested_position (GfMonitor *monitor,
 GfLogicalMonitor *
 gf_monitor_get_logical_monitor (GfMonitor *monitor)
 {
-  GfOutput *output = gf_monitor_get_main_output (monitor);
+  GfMonitorPrivate *priv;
 
-  if (output->crtc)
-    return output->crtc->logical_monitor;
-  else
-    return NULL;
+  priv = gf_monitor_get_instance_private (monitor);
+
+  return priv->logical_monitor;
 }
 
 GfMonitorMode *
@@ -755,6 +999,7 @@ gf_monitor_derive_current_mode (GfMonitor *monitor)
   GList *l;
 
   priv = gf_monitor_get_instance_private (monitor);
+  current_mode = NULL;
 
   for (l = priv->modes; l; l = l->next)
     {
@@ -768,6 +1013,8 @@ gf_monitor_derive_current_mode (GfMonitor *monitor)
     }
 
   priv->current_mode = current_mode;
+
+  g_warn_if_fail (is_current_mode_known (monitor));
 }
 
 void
@@ -809,12 +1056,15 @@ gf_monitor_calculate_mode_scale (GfMonitor     *monitor,
                                  GfMonitorMode *monitor_mode)
 {
   GfMonitorPrivate *priv;
+  GfMonitorManager *monitor_manager;
   GfBackend *backend;
   GfSettings *settings;
   gint global_scaling_factor;
 
   priv = gf_monitor_get_instance_private (monitor);
-  backend = gf_monitor_manager_get_backend (priv->monitor_manager);
+  backend = gf_gpu_get_backend (priv->gpu);
+  monitor_manager = gf_backend_get_monitor_manager (backend);
+  backend = gf_monitor_manager_get_backend (monitor_manager);
   settings = gf_backend_get_settings (backend);
 
   if (gf_settings_get_global_scaling_factor (settings, &global_scaling_factor))
@@ -962,6 +1212,22 @@ gf_monitor_mode_foreach_output (GfMonitor          *monitor,
 }
 
 gboolean
+gf_monitor_mode_should_be_advertised (GfMonitorMode *monitor_mode)
+{
+  GfMonitorMode *preferred_mode;
+
+  g_return_val_if_fail (monitor_mode != NULL, FALSE);
+
+  preferred_mode = gf_monitor_get_preferred_mode (monitor_mode->monitor);
+  if (monitor_mode->spec.width == preferred_mode->spec.width &&
+      monitor_mode->spec.height == preferred_mode->spec.height)
+    return TRUE;
+
+  return is_logical_size_large_enough (monitor_mode->spec.width,
+                                       monitor_mode->spec.height);
+}
+
+gboolean
 gf_verify_monitor_mode_spec (GfMonitorModeSpec  *mode_spec,
                              GError            **error)
 {
@@ -978,4 +1244,31 @@ gf_verify_monitor_mode_spec (GfMonitorModeSpec  *mode_spec,
 
       return FALSE;
     }
+}
+
+gboolean
+gf_monitor_has_aspect_as_size (GfMonitor *monitor)
+{
+  int width_mm;
+  int height_mm;
+
+  gf_monitor_get_physical_dimensions (monitor, &width_mm, &height_mm);
+
+  return (width_mm == 1600 && height_mm == 900) ||
+         (width_mm == 1600 && height_mm == 1000) ||
+         (width_mm == 160 && height_mm == 90) ||
+         (width_mm == 160 && height_mm == 100) ||
+         (width_mm == 16 && height_mm == 9) ||
+         (width_mm == 16 && height_mm == 10);
+}
+
+void
+gf_monitor_set_logical_monitor (GfMonitor        *monitor,
+                                GfLogicalMonitor *logical_monitor)
+{
+  GfMonitorPrivate *priv;
+
+  priv = gf_monitor_get_instance_private (monitor);
+
+  priv->logical_monitor = logical_monitor;
 }
