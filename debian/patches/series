@@ -11,3 +11,4 @@ gooroom-fix-monitor-labeler-error.patch
 gooroom-hidpi-monitor-error.patch
 gooroom-remove-secondary-message-from-autorunmanager-error-dialog.patch
 gooroom-restrict-Korean-input-when-entering-password.patch
+gooroom-initialize-variable-called-current_mode.patch
