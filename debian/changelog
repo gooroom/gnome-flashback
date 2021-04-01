@@ -1,3 +1,15 @@
+gnome-flashback (3.30.0-3+grm2u5) unstable; urgency=medium
+
+  [ donghun ]
+  * [711e55ca] [Bug:2064] Restrict Korean input when entering password
+
+  [ cjheo ]
+  * [36245c11] [Bug:1987] 단일디스플레이 설정에서 지원되지 않는 해상도가 표시되는 버그수정
+
+  [ Gooroom Autobuilder ]
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Thu, 01 Apr 2021 12:49:30 +0900
+
 gnome-flashback (3.30.0-3+grm2u4) unstable; urgency=medium
 
   [ cjheo ]
