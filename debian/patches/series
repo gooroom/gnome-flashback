@@ -2,3 +2,4 @@ varargs_uint64_t.diff
 gooroom-01-CWE-134-362-367.patch
 gooroom-02-lock-plug-dialog-show-primary-monitor.patch
 gooroom-03-gooroom-ui.patch
+gooroom-04-Create-desktop-directory-when-os-starts.patch
