@@ -1,0 +1,79 @@
+From 4605293a00418270b353b8db7cc3db8512adeb00 Mon Sep 17 00:00:00 2001
+From: donghun <donghun@gooroom.kr>
+Date: Mon, 27 Sep 2021 14:01:24 +0900
+Subject: [PATCH] lock plug dialog show primary monitor
+
+---
+ gnome-flashback/libscreensaver/gf-manager.c | 46 +++++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/gnome-flashback/libscreensaver/gf-manager.c b/gnome-flashback/libscreensaver/gf-manager.c
+index e512e70..b04cc35 100644
+--- a/gnome-flashback/libscreensaver/gf-manager.c
++++ b/gnome-flashback/libscreensaver/gf-manager.c
+@@ -86,9 +86,54 @@ static guint manager_signals[LAST_SIGNAL] = { 0 };
+ 
+ G_DEFINE_TYPE (GfManager, gf_manager, G_TYPE_OBJECT)
+ 
++static GdkScreen *
++gf_window_get_screen (GfWindow  *window)
++{
++  g_return_val_if_fail (GF_IS_WINDOW (window), NULL);
++
++  return gtk_window_get_screen (GTK_WINDOW (window));
++}
++
+ static GfWindow *
+ find_window_at_pointer (GfManager *self)
+ {
++  GSList *l;
++  GdkDisplay *display;
++  GdkScreen *screen;
++  GfWindow *window;
++  GdkMonitor *monitor;
++  int i, n_monitors;
++
++  display = gdk_display_get_default ();
++  screen = gdk_display_get_default_screen (display);
++
++  window = NULL;
++
++  n_monitors = gdk_display_get_n_monitors (display);
++  for (i = 0; i < n_monitors; i++)
++    {
++      GdkMonitor *m = gdk_display_get_monitor (display, i);
++      if (gdk_monitor_is_primary (m))
++        {
++          monitor = m;
++          break;
++        }
++    }
++
++  /* find the GfWindow that is on screen */
++  for (l = self->windows; l != NULL; l = l->next)
++    {
++      GfWindow *tmp;
++
++      tmp = GF_WINDOW (l->data);
++      if (gf_window_get_screen (tmp) == screen
++          && gf_window_get_monitor (tmp) == monitor)
++        {
++          window = tmp;
++          break;
++        }
++    }
++#if 0
+   GdkDisplay *display;
+   GdkSeat *seat;
+   GdkDevice *pointer;
+@@ -123,6 +168,7 @@ find_window_at_pointer (GfManager *self)
+         }
+     }
+ 
++#endif
+   if (window == NULL)
+     {
+       g_debug ("WARNING: Could not find the GfWindow for screen");
+-- 
+2.30.2
+

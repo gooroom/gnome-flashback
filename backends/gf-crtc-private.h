@@ -3,7 +3,7 @@
  * Copyright (C) 2003 Rob Adams
  * Copyright (C) 2004-2006 Elijah Newren
  * Copyright (C) 2013 Red Hat Inc.
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,76 +22,60 @@
  * - src/backends/meta-monitor-manager-private.h
  */
 
-#ifndef GF_CRTC_MODE_PRIVATE_H
-#define GF_CRTC_MODE_PRIVATE_H
+#ifndef GF_CRTC_PRIVATE_H
+#define GF_CRTC_PRIVATE_H
 
 #include <glib-object.h>
+#include <stdint.h>
 
+#include "gf-crtc-mode-private.h"
+#include "gf-gpu-private.h"
 #include "gf-monitor-manager-enums-private.h"
 #include "gf-monitor-manager-types-private.h"
-#include "gf-monitor-manager.h"
 #include "gf-rectangle.h"
 
 G_BEGIN_DECLS
 
-struct _GfCrtc
+typedef struct
 {
-  GObject             parent;
-
-  GfMonitorManager   *monitor_manager;
-
-  glong               crtc_id;
-  GfRectangle         rect;
-  GfCrtcMode         *current_mode;
+  GfRectangle         layout;
   GfMonitorTransform  transform;
-  guint               all_transforms;
 
-  /* Only used to build the logical configuration
-   * from the HW one
-   */
-  GfLogicalMonitor   *logical_monitor;
-
-  /* Used when changing configuration */
-  gboolean            is_dirty;
-
-  gpointer            driver_private;
-  GDestroyNotify      driver_notify;
-};
-
-struct _GfCrtcMode
-{
-  GObject         parent;
-
-  /* The low-level ID of this mode, used to apply back configuration */
-  glong           mode_id;
-  gchar          *name;
-
-  gint            width;
-  gint            height;
-  gfloat          refresh_rate;
-  GfCrtcModeFlag  flags;
-
-  gpointer        driver_private;
-  GDestroyNotify  driver_notify;
-};
+  GfCrtcMode         *mode;
+} GfCrtcConfig;
 
 typedef struct
 {
   GfCrtc             *crtc;
   GfCrtcMode         *mode;
-  int                 x;
-  int                 y;
+  GfRectangle         layout;
   GfMonitorTransform  transform;
   GPtrArray          *outputs;
-} GfCrtcInfo;
+} GfCrtcAssignment;
 
 #define GF_TYPE_CRTC (gf_crtc_get_type ())
-G_DECLARE_FINAL_TYPE (GfCrtc, gf_crtc, GF, CRTC, GObject)
+G_DECLARE_DERIVABLE_TYPE (GfCrtc, gf_crtc, GF, CRTC, GObject)
 
-#define GF_TYPE_CRTC_MODE (gf_crtc_mode_get_type ())
-G_DECLARE_FINAL_TYPE (GfCrtcMode, gf_crtc_mode, GF, CRTC_MODE, GObject)
+struct _GfCrtcClass
+{
+  GObjectClass parent_class;
+};
 
-GfMonitorManager *gf_crtc_get_monitor_manager (GfCrtc *crtc);
+uint64_t            gf_crtc_get_id             (GfCrtc             *self);
+
+GfGpu              *gf_crtc_get_gpu            (GfCrtc             *self);
+
+GfMonitorTransform  gf_crtc_get_all_transforms (GfCrtc             *self);
+
+void                gf_crtc_set_config         (GfCrtc             *self,
+                                                GfRectangle        *layout,
+                                                GfCrtcMode         *mode,
+                                                GfMonitorTransform  transform);
+
+void                gf_crtc_unset_config       (GfCrtc             *self);
+
+
+const GfCrtcConfig *gf_crtc_get_config         (GfCrtc             *self);
 
 G_END_DECLS
 

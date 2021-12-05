@@ -6,7 +6,7 @@
  * Copyright (C) 2003 Rob Adams
  * Copyright (C) 2004-2006 Elijah Newren
  * Copyright (C) 2013 Red Hat Inc.
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,22 +30,19 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <X11/Xatom.h>
-#include <X11/extensions/Xrandr.h>
+#include <X11/Xlibint.h>
 #include <X11/extensions/dpms.h>
 #include <X11/Xlib-xcb.h>
 #include <xcb/randr.h>
 
 #include "gf-backend-x11-private.h"
-#include "gf-crtc-private.h"
+#include "gf-crtc-xrandr-private.h"
+#include "gf-gpu-xrandr-private.h"
 #include "gf-monitor-config-manager-private.h"
 #include "gf-monitor-manager-xrandr-private.h"
 #include "gf-monitor-private.h"
 #include "gf-monitor-tiled-private.h"
-#include "gf-output-private.h"
-
-#define ALL_ROTATIONS (RR_Rotate_0 | RR_Rotate_90 | RR_Rotate_180 | RR_Rotate_270)
-#define ALL_TRANSFORMS ((1 << (GF_MONITOR_TRANSFORM_FLIPPED_270 + 1)) - 1)
+#include "gf-output-xrandr-private.h"
 
 /* Look for DPI_FALLBACK in:
  * http://git.gnome.org/browse/gnome-settings-daemon/tree/plugins/xsettings/gsd-xsettings-manager.c
@@ -55,26 +52,21 @@
 
 struct _GfMonitorManagerXrandr
 {
-  GfMonitorManager    parent;
+  GfMonitorManager  parent;
 
-  Display            *xdisplay;
-  Window              xroot;
+  Display          *xdisplay;
+  Window            xroot;
 
-  gint                rr_event_base;
-  gint                rr_error_base;
+  gint              rr_event_base;
+  gint              rr_error_base;
 
-  gboolean            has_randr15;
-  GHashTable         *tiled_monitor_atoms;
+  gboolean          has_randr15;
+  GHashTable       *tiled_monitor_atoms;
 
-  XRRScreenResources *resources;
+  Time              last_xrandr_set_timestamp;
 
-  Time                last_xrandr_set_timestamp;
-
-  gint                max_screen_width;
-  gint                max_screen_height;
-
-  gfloat             *supported_scales;
-  gint                n_supported_scales;
+  gfloat           *supported_scales;
+  gint              n_supported_scales;
 };
 
 typedef struct
@@ -177,8 +169,9 @@ gf_monitor_manager_xrandr_rebuild_derived (GfMonitorManager *manager,
 
 static gboolean
 xrandr_set_crtc_config (GfMonitorManagerXrandr *xrandr,
+                        GfCrtc                 *crtc,
                         gboolean                save_timestamp,
-                        xcb_randr_crtc_t        crtc,
+                        xcb_randr_crtc_t        xrandr_crtc,
                         xcb_timestamp_t         timestamp,
                         gint                    x,
                         gint                    y,
@@ -187,188 +180,98 @@ xrandr_set_crtc_config (GfMonitorManagerXrandr *xrandr,
                         xcb_randr_output_t     *outputs,
                         gint                    n_outputs)
 {
-  xcb_connection_t *xcb_conn;
-  xcb_timestamp_t config_timestamp;
-  xcb_randr_set_crtc_config_cookie_t cookie;
-  xcb_randr_set_crtc_config_reply_t *reply;
-  xcb_generic_error_t *xcb_error;
+  xcb_timestamp_t new_timestamp;
 
-  xcb_conn = XGetXCBConnection (xrandr->xdisplay);
-  config_timestamp = xrandr->resources->configTimestamp;
-  cookie = xcb_randr_set_crtc_config (xcb_conn, crtc,
-                                      timestamp, config_timestamp,
-                                      x, y, mode, rotation,
-                                      n_outputs, outputs);
-
-  xcb_error = NULL;
-  reply = xcb_randr_set_crtc_config_reply (xcb_conn, cookie, &xcb_error);
-  if (xcb_error || !reply)
-    {
-      g_free (xcb_error);
-      g_free (reply);
-
-      return FALSE;
-    }
+  if (!gf_crtc_xrandr_set_config (GF_CRTC_XRANDR (crtc),
+                                  xrandr_crtc, timestamp,
+                                  x, y, mode, rotation,
+                                  outputs, n_outputs,
+                                  &new_timestamp))
+    return FALSE;
 
   if (save_timestamp)
-    xrandr->last_xrandr_set_timestamp = reply->timestamp;
-
-  g_free (reply);
+    xrandr->last_xrandr_set_timestamp = new_timestamp;
 
   return TRUE;
 }
 
-static void
-output_set_presentation_xrandr (GfMonitorManagerXrandr *xrandr,
-                                GfOutput               *output,
-                                gboolean                presentation)
-{
-  Atom atom;
-  gint value;
-
-  atom = XInternAtom (xrandr->xdisplay, "_GNOME_FLASHBACK_PRESENTATION_OUTPUT", False);
-  value= presentation;
-
-  xcb_randr_change_output_property (XGetXCBConnection (xrandr->xdisplay),
-                                    (XID) output->winsys_id,
-                                    atom, XCB_ATOM_CARDINAL, 32,
-                                    XCB_PROP_MODE_REPLACE,
-                                    1, &value);
-}
-
-static void
-output_set_underscanning_xrandr (GfMonitorManagerXrandr *xrandr,
-                                 GfOutput               *output,
-                                 gboolean                underscanning)
-{
-  Atom prop, valueatom;
-  const gchar *value;
-
-  prop = XInternAtom (xrandr->xdisplay, "underscan", False);
-
-  value = underscanning ? "on" : "off";
-  valueatom = XInternAtom (xrandr->xdisplay, value, False);
-
-  xcb_randr_change_output_property (XGetXCBConnection (xrandr->xdisplay),
-                                    (XID) output->winsys_id,
-                                    prop, XCB_ATOM_ATOM, 32,
-                                    XCB_PROP_MODE_REPLACE,
-                                    1, &valueatom);
-
-  /* Configure the border at the same time. Currently, we use a
-   * 5% of the width/height of the mode. In the future, we should
-   * make the border configurable.
-   */
-  if (underscanning)
-    {
-      uint32_t border_value;
-
-      prop = XInternAtom (xrandr->xdisplay, "underscan hborder", False);
-      border_value = output->crtc->current_mode->width * 0.05;
-
-      xcb_randr_change_output_property (XGetXCBConnection (xrandr->xdisplay),
-                                        (XID) output->winsys_id,
-                                        prop, XCB_ATOM_INTEGER, 32,
-                                        XCB_PROP_MODE_REPLACE,
-                                        1, &border_value);
-
-      prop = XInternAtom (xrandr->xdisplay, "underscan vborder", False);
-      border_value = output->crtc->current_mode->height * 0.05;
-
-      xcb_randr_change_output_property (XGetXCBConnection (xrandr->xdisplay),
-                                        (XID) output->winsys_id,
-                                        prop, XCB_ATOM_INTEGER, 32,
-                                        XCB_PROP_MODE_REPLACE,
-                                        1, &border_value);
-    }
-}
-
 static gboolean
-is_crtc_assignment_changed (GfCrtc      *crtc,
-                            GfCrtcInfo **crtc_infos,
-                            guint        n_crtc_infos)
+is_crtc_assignment_changed (GfCrtc            *crtc,
+                            GfCrtcAssignment **crtc_assignments,
+                            unsigned int       n_crtc_assignments)
 {
   guint i;
 
-  for (i = 0; i < n_crtc_infos; i++)
+  for (i = 0; i < n_crtc_assignments; i++)
     {
-      GfCrtcInfo *crtc_info = crtc_infos[i];
-      guint j;
+      GfCrtcAssignment *crtc_assignment;
 
-      if (crtc_info->crtc != crtc)
+      crtc_assignment = crtc_assignments[i];
+
+      if (crtc_assignment->crtc != crtc)
         continue;
 
-      if (crtc->current_mode != crtc_info->mode)
-        return TRUE;
-
-      if (crtc->rect.x != crtc_info->x)
-        return TRUE;
-
-      if (crtc->rect.y != crtc_info->y)
-        return TRUE;
-
-      if (crtc->transform != crtc_info->transform)
-        return TRUE;
-
-      for (j = 0; j < crtc_info->outputs->len; j++)
-        {
-          GfOutput *output = ((GfOutput**) crtc_info->outputs->pdata)[j];
-
-          if (output->crtc != crtc)
-            return TRUE;
-        }
-
-      return FALSE;
+      return gf_crtc_xrandr_is_assignment_changed (GF_CRTC_XRANDR (crtc),
+                                                   crtc_assignment);
     }
 
-  return crtc->current_mode != NULL;
+  return !!gf_crtc_xrandr_get_current_mode (GF_CRTC_XRANDR (crtc));
 }
 
 static gboolean
-is_output_assignment_changed (GfOutput      *output,
-                              GfCrtcInfo   **crtc_infos,
-                              guint          n_crtc_infos,
-                              GfOutputInfo **output_infos,
-                              guint          n_output_infos)
+is_output_assignment_changed (GfOutput            *output,
+                              GfCrtcAssignment   **crtc_assignments,
+                              guint                n_crtc_assignments,
+                              GfOutputAssignment **output_assignments,
+                              guint                n_output_assignments)
 {
-  gboolean output_is_found = FALSE;
+  gboolean output_is_found;
+  GfCrtc *assigned_crtc;
   guint i;
 
-  for (i = 0; i < n_output_infos; i++)
-    {
-      GfOutputInfo *output_info = output_infos[i];
+  output_is_found = FALSE;
 
-      if (output_info->output != output)
+  for (i = 0; i < n_output_assignments; i++)
+    {
+      GfOutputAssignment *output_assignment;
+
+      output_assignment = output_assignments[i];
+
+      if (output_assignment->output != output)
         continue;
 
-      if (output->is_primary != output_info->is_primary)
+      if (gf_output_is_primary (output) != output_assignment->is_primary)
         return TRUE;
 
-      if (output->is_presentation != output_info->is_presentation)
+      if (gf_output_is_presentation (output) != output_assignment->is_presentation)
         return TRUE;
 
-      if (output->is_underscanning != output_info->is_underscanning)
+      if (gf_output_is_underscanning (output) != output_assignment->is_underscanning)
         return TRUE;
 
       output_is_found = TRUE;
     }
 
-  if (!output_is_found)
-    return output->crtc != NULL;
+  assigned_crtc = gf_output_get_assigned_crtc (output);
 
-  for (i = 0; i < n_crtc_infos; i++)
+  if (!output_is_found)
+    return assigned_crtc != NULL;
+
+  for (i = 0; i < n_crtc_assignments; i++)
     {
-      GfCrtcInfo *crtc_info = crtc_infos[i];
+      GfCrtcAssignment *crtc_assignment;
       guint j;
 
-      for (j = 0; j < crtc_info->outputs->len; j++)
+      crtc_assignment = crtc_assignments[i];
+
+      for (j = 0; j < crtc_assignment->outputs->len; j++)
         {
-          GfOutput *crtc_info_output;
+          GfOutput *crtc_assignment_output;
 
-          crtc_info_output = ((GfOutput**) crtc_info->outputs->pdata)[j];
+          crtc_assignment_output = ((GfOutput**) crtc_assignment->outputs->pdata)[j];
 
-          if (crtc_info_output == output &&
-              crtc_info->crtc == output->crtc)
+          if (crtc_assignment_output == output &&
+              crtc_assignment->crtc == assigned_crtc)
             return FALSE;
         }
     }
@@ -376,138 +279,53 @@ is_output_assignment_changed (GfOutput      *output,
   return TRUE;
 }
 
-static gboolean
-is_assignments_changed (GfMonitorManager  *manager,
-                        GfCrtcInfo       **crtc_infos,
-                        guint              n_crtc_infos,
-                        GfOutputInfo     **output_infos,
-                        guint              n_output_infos)
+static GfGpu *
+get_gpu (GfMonitorManagerXrandr *self)
 {
+  GfMonitorManager *manager;
+  GfBackend *backend;
+
+  manager = GF_MONITOR_MANAGER (self);
+  backend = gf_monitor_manager_get_backend (manager);
+
+  return GF_GPU (gf_backend_get_gpus (backend)->data);
+}
+
+static gboolean
+is_assignments_changed (GfMonitorManager    *manager,
+                        GfCrtcAssignment   **crtc_assignments,
+                        guint                n_crtc_assignments,
+                        GfOutputAssignment **output_assignments,
+                        guint                n_output_assignments)
+{
+  GfMonitorManagerXrandr *manager_xrandr;
+  GfGpu *gpu;
   GList *l;
 
-  for (l = manager->crtcs; l; l = l->next)
+  manager_xrandr = GF_MONITOR_MANAGER_XRANDR (manager);
+  gpu = get_gpu (manager_xrandr);
+
+  for (l = gf_gpu_get_crtcs (gpu); l; l = l->next)
     {
       GfCrtc *crtc = l->data;
 
-      if (is_crtc_assignment_changed (crtc, crtc_infos, n_crtc_infos))
+      if (is_crtc_assignment_changed (crtc, crtc_assignments, n_crtc_assignments))
         return TRUE;
     }
 
-  for (l = manager->outputs; l; l = l->next)
+  for (l = gf_gpu_get_outputs (gpu); l; l = l->next)
     {
       GfOutput *output = l->data;
 
       if (is_output_assignment_changed (output,
-                                        crtc_infos,
-                                        n_crtc_infos,
-                                        output_infos,
-                                        n_output_infos))
+                                        crtc_assignments,
+                                        n_crtc_assignments,
+                                        output_assignments,
+                                        n_output_assignments))
         return TRUE;
     }
 
   return FALSE;
-}
-
-static guint8 *
-get_edid_property (Display  *xdisplay,
-                   RROutput  output,
-                   Atom      atom,
-                   gsize    *len)
-{
-  guchar *prop;
-  gint actual_format;
-  gulong nitems, bytes_after;
-  Atom actual_type;
-  guint8 *result;
-
-  XRRGetOutputProperty (xdisplay, output, atom,
-                        0, 100, False, False,
-                        AnyPropertyType,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &prop);
-
-  if (actual_type == XA_INTEGER && actual_format == 8)
-    {
-      result = g_memdup (prop, nitems);
-      if (len)
-        *len = nitems;
-    }
-  else
-    {
-      result = NULL;
-    }
-
-  if (prop)
-    XFree (prop);
-
-  return result;
-}
-
-static GBytes *
-read_output_edid (GfMonitorManagerXrandr *xrandr,
-                  XID                     winsys_id)
-{
-  Atom edid_atom;
-  guint8 *result;
-  gsize len;
-
-  edid_atom = XInternAtom (xrandr->xdisplay, "EDID", FALSE);
-  result = get_edid_property (xrandr->xdisplay, winsys_id, edid_atom, &len);
-
-  if (!result)
-    {
-      edid_atom = XInternAtom (xrandr->xdisplay, "EDID_DATA", FALSE);
-      result = get_edid_property (xrandr->xdisplay, winsys_id, edid_atom, &len);
-    }
-
-  if (result)
-    {
-      if (len > 0 && len % 128 == 0)
-        return g_bytes_new_take (result, len);
-      else
-        g_free (result);
-    }
-
-  return NULL;
-}
-
-static GfMonitorTransform
-gf_monitor_transform_from_xrandr (Rotation rotation)
-{
-  static const GfMonitorTransform y_reflected_map[4] = {
-    GF_MONITOR_TRANSFORM_FLIPPED_180,
-    GF_MONITOR_TRANSFORM_FLIPPED_90,
-    GF_MONITOR_TRANSFORM_FLIPPED,
-    GF_MONITOR_TRANSFORM_FLIPPED_270
-  };
-  GfMonitorTransform ret;
-
-  switch (rotation & 0x7F)
-    {
-      default:
-      case RR_Rotate_0:
-        ret = GF_MONITOR_TRANSFORM_NORMAL;
-        break;
-
-      case RR_Rotate_90:
-        ret = GF_MONITOR_TRANSFORM_90;
-        break;
-
-      case RR_Rotate_180:
-        ret = GF_MONITOR_TRANSFORM_180;
-        break;
-
-      case RR_Rotate_270:
-        ret = GF_MONITOR_TRANSFORM_270;
-        break;
-    }
-
-  if (rotation & RR_Reflect_X)
-    return ret + 4;
-  else if (rotation & RR_Reflect_Y)
-    return y_reflected_map[ret];
-  else
-    return ret;
 }
 
 static xcb_randr_rotation_t
@@ -559,604 +377,27 @@ gf_monitor_transform_to_xrandr (GfMonitorTransform transform)
   return rotation;
 }
 
-static GfMonitorTransform
-gf_monitor_transform_from_xrandr_all (Rotation rotation)
-{
-  GfMonitorTransform ret;
-
-  /* Handle the common cases first (none or all) */
-  if (rotation == 0 || rotation == RR_Rotate_0)
-    return (1 << GF_MONITOR_TRANSFORM_NORMAL);
-
-  /* All rotations and one reflection -> all of them by composition */
-  if ((rotation & ALL_ROTATIONS) &&
-      ((rotation & RR_Reflect_X) || (rotation & RR_Reflect_Y)))
-    return ALL_TRANSFORMS;
-
-  ret = 1 << GF_MONITOR_TRANSFORM_NORMAL;
-  if (rotation & RR_Rotate_90)
-    ret |= 1 << GF_MONITOR_TRANSFORM_90;
-  if (rotation & RR_Rotate_180)
-    ret |= 1 << GF_MONITOR_TRANSFORM_180;
-  if (rotation & RR_Rotate_270)
-    ret |= 1 << GF_MONITOR_TRANSFORM_270;
-  if (rotation & (RR_Rotate_0 | RR_Reflect_X))
-    ret |= 1 << GF_MONITOR_TRANSFORM_FLIPPED;
-  if (rotation & (RR_Rotate_90 | RR_Reflect_X))
-    ret |= 1 << GF_MONITOR_TRANSFORM_FLIPPED_90;
-  if (rotation & (RR_Rotate_180 | RR_Reflect_X))
-    ret |= 1 << GF_MONITOR_TRANSFORM_FLIPPED_180;
-  if (rotation & (RR_Rotate_270 | RR_Reflect_X))
-    ret |= 1 << GF_MONITOR_TRANSFORM_FLIPPED_270;
-
-  return ret;
-}
-
-static gboolean
-output_get_property_exists (GfMonitorManagerXrandr *xrandr,
-                            GfOutput               *output,
-                            const gchar            *propname)
-{
-  gboolean exists;
-  Atom atom, actual_type;
-  gint actual_format;
-  gulong nitems, bytes_after;
-  guchar *buffer;
-
-  atom = XInternAtom (xrandr->xdisplay, propname, False);
-  XRRGetOutputProperty (xrandr->xdisplay, (XID) output->winsys_id, atom,
-                        0, G_MAXLONG, False, False, AnyPropertyType,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &buffer);
-
-  exists = (actual_type != None);
-
-  if (buffer)
-    XFree (buffer);
-
-  return exists;
-}
-
-static gboolean
-output_get_hotplug_mode_update (GfMonitorManagerXrandr *xrandr,
-                                GfOutput               *output)
-{
-  return output_get_property_exists (xrandr, output, "hotplug_mode_update");
-}
-
-static gboolean
-output_get_integer_property (GfMonitorManagerXrandr *xrandr,
-                             GfOutput               *output,
-                             const gchar            *propname,
-                             gint                   *value)
-{
-  gboolean exists;
-  Atom atom, actual_type;
-  gint actual_format;
-  gulong nitems, bytes_after;
-  guchar *buffer;
-
-  atom = XInternAtom (xrandr->xdisplay, propname, False);
-  XRRGetOutputProperty (xrandr->xdisplay, (XID) output->winsys_id, atom,
-                        0, G_MAXLONG, False, False, XA_INTEGER,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &buffer);
-
-  exists = (actual_type == XA_INTEGER && actual_format == 32 && nitems == 1);
-
-  if (exists && value != NULL)
-    *value = ((gint*) buffer)[0];
-
-  if (buffer)
-    XFree (buffer);
-
-  return exists;
-}
-
-static gint
-output_get_suggested_x (GfMonitorManagerXrandr *xrandr,
-                        GfOutput               *output)
-{
-  gint val;
-
-  if (output_get_integer_property (xrandr, output, "suggested X", &val))
-    return val;
-
-  return -1;
-}
-
-static gint
-output_get_suggested_y (GfMonitorManagerXrandr *xrandr,
-                        GfOutput               *output)
-{
-  gint val;
-
-  if (output_get_integer_property (xrandr, output, "suggested Y", &val))
-    return val;
-
-  return -1;
-}
-
-static GfConnectorType
-connector_type_from_atom (GfMonitorManagerXrandr *xrandr,
-                          Atom                    atom)
-{
-  Display *xdisplay;
-
-  xdisplay = xrandr->xdisplay;
-
-  if (atom == XInternAtom (xdisplay, "HDMI", True))
-    return GF_CONNECTOR_TYPE_HDMIA;
-  if (atom == XInternAtom (xdisplay, "VGA", True))
-    return GF_CONNECTOR_TYPE_VGA;
-  /* Doesn't have a DRM equivalent, but means an internal panel.
-   * We could pick either LVDS or eDP here. */
-  if (atom == XInternAtom (xdisplay, "Panel", True))
-    return GF_CONNECTOR_TYPE_LVDS;
-  if (atom == XInternAtom (xdisplay, "DVI", True) ||
-      atom == XInternAtom (xdisplay, "DVI-I", True))
-    return GF_CONNECTOR_TYPE_DVII;
-  if (atom == XInternAtom (xdisplay, "DVI-A", True))
-    return GF_CONNECTOR_TYPE_DVIA;
-  if (atom == XInternAtom (xdisplay, "DVI-D", True))
-    return GF_CONNECTOR_TYPE_DVID;
-  if (atom == XInternAtom (xdisplay, "DisplayPort", True))
-    return GF_CONNECTOR_TYPE_DisplayPort;
-  if (atom == XInternAtom (xdisplay, "TV", True))
-    return GF_CONNECTOR_TYPE_TV;
-  if (atom == XInternAtom (xdisplay, "TV-Composite", True))
-    return GF_CONNECTOR_TYPE_Composite;
-  if (atom == XInternAtom (xdisplay, "TV-SVideo", True))
-    return GF_CONNECTOR_TYPE_SVIDEO;
-  /* Another set of mismatches. */
-  if (atom == XInternAtom (xdisplay, "TV-SCART", True))
-    return GF_CONNECTOR_TYPE_TV;
-  if (atom == XInternAtom (xdisplay, "TV-C4", True))
-    return GF_CONNECTOR_TYPE_TV;
-
-  return GF_CONNECTOR_TYPE_Unknown;
-}
-
-static GfConnectorType
-output_get_connector_type_from_prop (GfMonitorManagerXrandr *xrandr,
-                                     GfOutput               *output)
-{
-  Atom atom, actual_type, connector_type_atom;
-  gint actual_format;
-  gulong nitems, bytes_after;
-  guchar *buffer;
-  GfConnectorType ret;
-
-  atom = XInternAtom (xrandr->xdisplay, "ConnectorType", False);
-  XRRGetOutputProperty (xrandr->xdisplay, (XID) output->winsys_id, atom,
-                        0, G_MAXLONG, False, False, XA_ATOM,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &buffer);
-
-  if (actual_type != XA_ATOM || actual_format != 32 || nitems < 1)
-    {
-      if (buffer)
-        XFree (buffer);
-
-      return GF_CONNECTOR_TYPE_Unknown;
-    }
-
-  connector_type_atom = ((Atom *) buffer)[0];
-  ret = connector_type_from_atom (xrandr, connector_type_atom);
-  XFree (buffer);
-
-  return ret;
-}
-
-static GfConnectorType
-output_get_connector_type_from_name (GfMonitorManagerXrandr *xrandr,
-                                     GfOutput               *output)
-{
-  const gchar *name;
-
-  name = output->name;
-
-  /* drmmode_display.c, which was copy/pasted across all the FOSS
-   * xf86-video-* drivers, seems to name its outputs based on the
-   * connector type, so look for that....
-   *
-   * SNA has its own naming scheme, because what else did you expect
-   * from SNA, but it's not too different, so we can thankfully use
-   * that with minor changes.
-   *
-   * http://cgit.freedesktop.org/xorg/xserver/tree/hw/xfree86/drivers/modesetting/drmmode_display.c#n953
-   * http://cgit.freedesktop.org/xorg/driver/xf86-video-intel/tree/src/sna/sna_display.c#n3486
-   */
-
-  if (g_str_has_prefix (name, "DVI"))
-    return GF_CONNECTOR_TYPE_DVII;
-  if (g_str_has_prefix (name, "LVDS"))
-    return GF_CONNECTOR_TYPE_LVDS;
-  if (g_str_has_prefix (name, "HDMI"))
-    return GF_CONNECTOR_TYPE_HDMIA;
-  if (g_str_has_prefix (name, "VGA"))
-    return GF_CONNECTOR_TYPE_VGA;
-  /* SNA uses DP, not DisplayPort. Test for both. */
-  if (g_str_has_prefix (name, "DP") || g_str_has_prefix (name, "DisplayPort"))
-    return GF_CONNECTOR_TYPE_DisplayPort;
-  if (g_str_has_prefix (name, "eDP"))
-    return GF_CONNECTOR_TYPE_eDP;
-  if (g_str_has_prefix (name, "Virtual"))
-    return GF_CONNECTOR_TYPE_VIRTUAL;
-  if (g_str_has_prefix (name, "Composite"))
-    return GF_CONNECTOR_TYPE_Composite;
-  if (g_str_has_prefix (name, "S-video"))
-    return GF_CONNECTOR_TYPE_SVIDEO;
-  if (g_str_has_prefix (name, "TV"))
-    return GF_CONNECTOR_TYPE_TV;
-  if (g_str_has_prefix (name, "CTV"))
-    return GF_CONNECTOR_TYPE_Composite;
-  if (g_str_has_prefix (name, "DSI"))
-    return GF_CONNECTOR_TYPE_DSI;
-  if (g_str_has_prefix (name, "DIN"))
-    return GF_CONNECTOR_TYPE_9PinDIN;
-
-  return GF_CONNECTOR_TYPE_Unknown;
-}
-
-static GfConnectorType
-output_get_connector_type (GfMonitorManagerXrandr *xrandr,
-                           GfOutput               *output)
-{
-  GfConnectorType ret;
-
-  /* The "ConnectorType" property is considered mandatory since RandR 1.3,
-   * but none of the FOSS drivers support it, because we're a bunch of
-   * professional software developers.
-   *
-   * Try poking it first, without any expectations that it will work.
-   * If it's not there, we thankfully have other bonghits to try next.
-   */
-  ret = output_get_connector_type_from_prop (xrandr, output);
-  if (ret != GF_CONNECTOR_TYPE_Unknown)
-    return ret;
-
-  /* Fall back to heuristics based on the output name. */
-  ret = output_get_connector_type_from_name (xrandr, output);
-  if (ret != GF_CONNECTOR_TYPE_Unknown)
-    return ret;
-
-  return GF_CONNECTOR_TYPE_Unknown;
-}
-
 static void
-output_get_tile_info (GfMonitorManagerXrandr *xrandr,
-                      GfOutput               *output)
-{
-  Atom tile_atom;
-  guchar *prop;
-  gulong nitems, bytes_after;
-  gint actual_format;
-  Atom actual_type;
-
-  if (xrandr->has_randr15 == FALSE)
-    return;
-
-  tile_atom = XInternAtom (xrandr->xdisplay, "TILE", FALSE);
-  XRRGetOutputProperty (xrandr->xdisplay, output->winsys_id,
-                        tile_atom, 0, 100, False,
-                        False, AnyPropertyType,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &prop);
-
-  if (actual_type == XA_INTEGER && actual_format == 32 && nitems == 8)
-    {
-      glong *values = (glong *) prop;
-      output->tile_info.group_id = values[0];
-      output->tile_info.flags = values[1];
-      output->tile_info.max_h_tiles = values[2];
-      output->tile_info.max_v_tiles = values[3];
-      output->tile_info.loc_h_tile = values[4];
-      output->tile_info.loc_v_tile = values[5];
-      output->tile_info.tile_w = values[6];
-      output->tile_info.tile_h = values[7];
-    }
-
-  if (prop)
-    XFree (prop);
-}
-
-static void
-output_get_modes (GfMonitorManager *manager,
-                  GfOutput         *output,
-                  XRROutputInfo    *xrandr_output)
-{
-  guint j;
-  guint n_actual_modes;
-
-  output->modes = g_new0 (GfCrtcMode *, xrandr_output->nmode);
-
-  n_actual_modes = 0;
-  for (j = 0; j < (guint) xrandr_output->nmode; j++)
-    {
-      GList *l;
-
-      for (l = manager->modes; l; l = l->next)
-        {
-          GfCrtcMode *mode = l->data;
-
-          if (xrandr_output->modes[j] == (XID) mode->mode_id)
-            {
-              output->modes[n_actual_modes] = mode;
-              n_actual_modes += 1;
-              break;
-            }
-        }
-    }
-
-  output->n_modes = n_actual_modes;
-  if (n_actual_modes > 0)
-    output->preferred_mode = output->modes[0];
-}
-
-static void
-output_get_crtcs (GfMonitorManager *manager,
-                  GfOutput         *output,
-                  XRROutputInfo    *xrandr_output)
-{
-  guint j;
-  guint n_actual_crtcs;
-  GList *l;
-
-  output->possible_crtcs = g_new0 (GfCrtc *, xrandr_output->ncrtc);
-
-  n_actual_crtcs = 0;
-  for (j = 0; j < (guint) xrandr_output->ncrtc; j++)
-    {
-      for (l = manager->crtcs; l; l = l->next)
-        {
-          GfCrtc *crtc = l->data;
-
-          if ((XID) crtc->crtc_id == xrandr_output->crtcs[j])
-            {
-              output->possible_crtcs[n_actual_crtcs] = crtc;
-              n_actual_crtcs += 1;
-              break;
-            }
-        }
-    }
-  output->n_possible_crtcs = n_actual_crtcs;
-
-  output->crtc = NULL;
-  for (l = manager->crtcs; l; l = l->next)
-    {
-      GfCrtc *crtc = l->data;
-
-      if ((XID) crtc->crtc_id == xrandr_output->crtc)
-        {
-          output->crtc = crtc;
-          break;
-        }
-    }
-}
-
-static gboolean
-output_get_boolean_property (GfMonitorManagerXrandr *xrandr,
-                             GfOutput               *output,
-                             const gchar            *propname)
-{
-  Atom atom, actual_type;
-  gint actual_format;
-  gulong nitems, bytes_after;
-  guchar *buffer;
-  gboolean value;
-
-  atom = XInternAtom (xrandr->xdisplay, propname, False);
-  XRRGetOutputProperty (xrandr->xdisplay, (XID) output->winsys_id, atom,
-                        0, G_MAXLONG, False, False, XA_CARDINAL,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &buffer);
-
-  if (actual_type != XA_CARDINAL || actual_format != 32 || nitems < 1)
-    {
-      if (buffer)
-        XFree (buffer);
-
-      return FALSE;
-    }
-
-  value = ((gint*) buffer)[0];
-  XFree (buffer);
-
-  return value;
-}
-
-static gboolean
-output_get_presentation_xrandr (GfMonitorManagerXrandr *xrandr,
-                                GfOutput               *output)
-{
-  return output_get_boolean_property (xrandr, output, "_GNOME_FLASHBACK_PRESENTATION_OUTPUT");
-}
-
-static gboolean
-output_get_underscanning_xrandr (GfMonitorManagerXrandr *xrandr,
-                                 GfOutput               *output)
-{
-  Atom atom, actual_type;
-  gint actual_format;
-  gulong nitems, bytes_after;
-  guchar *buffer;
-  gchar *str;
-  gboolean value;
-
-  atom = XInternAtom (xrandr->xdisplay, "underscan", False);
-  XRRGetOutputProperty (xrandr->xdisplay, (XID) output->winsys_id, atom,
-                        0, G_MAXLONG, False, False, XA_ATOM,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &buffer);
-
-  if (actual_type != XA_ATOM || actual_format != 32 || nitems < 1)
-    {
-      if (buffer)
-        XFree (buffer);
-
-      return FALSE;
-    }
-
-  str = XGetAtomName (xrandr->xdisplay, *(Atom *)buffer);
-  XFree (buffer);
-
-  value = !strcmp (str, "on");
-  XFree (str);
-
-  return value;
-}
-
-static gboolean
-output_get_supports_underscanning_xrandr (GfMonitorManagerXrandr *xrandr,
-                                          GfOutput               *output)
-{
-  Atom atom, actual_type;
-  gint actual_format, i;
-  gulong nitems, bytes_after;
-  guchar *buffer;
-  XRRPropertyInfo *property_info;
-  Atom *values;
-  gboolean supports_underscanning = FALSE;
-
-  atom = XInternAtom (xrandr->xdisplay, "underscan", False);
-  XRRGetOutputProperty (xrandr->xdisplay, (XID) output->winsys_id, atom,
-                        0, G_MAXLONG, False, False, XA_ATOM,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &buffer);
-
-  if (actual_type != XA_ATOM || actual_format != 32 || nitems < 1)
-    {
-      if (buffer)
-        XFree (buffer);
-
-      return FALSE;
-    }
-
-  property_info = XRRQueryOutputProperty (xrandr->xdisplay,
-                                          (XID) output->winsys_id,
-                                          atom);
-  values = (Atom *) property_info->values;
-
-  for (i = 0; i < property_info->num_values; i++)
-    {
-      /* The output supports underscanning if "on" is a valid value
-       * for the underscan property.
-       */
-      gchar *name = XGetAtomName (xrandr->xdisplay, values[i]);
-      if (strcmp (name, "on") == 0)
-        supports_underscanning = TRUE;
-
-      XFree (name);
-    }
-
-  XFree (property_info);
-
-  return supports_underscanning;
-}
-
-static int
-normalize_backlight (GfOutput *output,
-                     gint      hw_value)
-{
-  return round ((gdouble) (hw_value - output->backlight_min) /
-                (output->backlight_max - output->backlight_min) * 100.0);
-}
-
-static gint
-output_get_backlight_xrandr (GfMonitorManagerXrandr *xrandr,
-                             GfOutput               *output)
-{
-  gint value = -1;
-  Atom atom, actual_type;
-  gint actual_format;
-  gulong nitems, bytes_after;
-  guchar *buffer;
-
-  atom = XInternAtom (xrandr->xdisplay, "Backlight", False);
-  XRRGetOutputProperty (xrandr->xdisplay, (XID) output->winsys_id, atom,
-                        0, G_MAXLONG, False, False, XA_INTEGER,
-                        &actual_type, &actual_format,
-                        &nitems, &bytes_after, &buffer);
-
-  if (actual_type != XA_INTEGER || actual_format != 32 || nitems < 1)
-    {
-      if (buffer)
-        XFree (buffer);
-
-      return FALSE;
-    }
-
-  value = ((gint*) buffer)[0];
-  XFree (buffer);
-
-  if (value > 0)
-    return normalize_backlight (output, value);
-  else
-    return -1;
-}
-
-static void
-output_get_backlight_limits_xrandr (GfMonitorManagerXrandr *xrandr,
-                                    GfOutput               *output)
-{
-  Atom atom;
-  xcb_connection_t *xcb_conn;
-  xcb_randr_query_output_property_cookie_t cookie;
-  xcb_randr_query_output_property_reply_t *reply;
-  int32_t *values;
-
-  atom = XInternAtom (xrandr->xdisplay, "Backlight", False);
-
-  xcb_conn = XGetXCBConnection (xrandr->xdisplay);
-  cookie = xcb_randr_query_output_property (xcb_conn,
-                                            (xcb_randr_output_t) output->winsys_id,
-                                            (xcb_atom_t) atom);
-
-  reply = xcb_randr_query_output_property_reply (xcb_conn, cookie, NULL);
-
-  /* This can happen on systems without backlights. */
-  if (reply == NULL)
-    return;
-
-  if (!reply->range || reply->length != 2)
-    {
-      g_warning ("backlight %s was not range\n", output->name);
-      g_free (reply);
-      return;
-    }
-
-  values = xcb_randr_query_output_property_valid_values (reply);
-
-  output->backlight_min = values[0];
-  output->backlight_max = values[1];
-
-  g_free (reply);
-}
-
-static gint
-compare_outputs (const void *one,
-                 const void *two)
-{
-  const GfOutput *o_one = one, *o_two = two;
-
-  return strcmp (o_one->name, o_two->name);
-}
-
-static void
-apply_crtc_assignments (GfMonitorManager  *manager,
-                        gboolean           save_timestamp,
-                        GfCrtcInfo       **crtcs,
-                        guint              n_crtcs,
-                        GfOutputInfo     **outputs,
-                        guint              n_outputs)
+apply_crtc_assignments (GfMonitorManager    *manager,
+                        gboolean             save_timestamp,
+                        GfCrtcAssignment   **crtcs,
+                        guint                n_crtcs,
+                        GfOutputAssignment **outputs,
+                        guint                n_outputs)
 {
   GfMonitorManagerXrandr *xrandr;
+  GfGpu *gpu;
+  GList *to_configure_outputs;
+  GList *to_disable_crtcs;
   gint width, height, width_mm, height_mm;
   guint i;
   GList *l;
 
   xrandr = GF_MONITOR_MANAGER_XRANDR (manager);
+  gpu = get_gpu (xrandr);
+
+  to_configure_outputs = g_list_copy (gf_gpu_get_outputs (gpu));
+  to_disable_crtcs = g_list_copy (gf_gpu_get_crtcs (gpu));
 
   XGrabServer (xrandr->xdisplay);
 
@@ -1164,24 +405,16 @@ apply_crtc_assignments (GfMonitorManager  *manager,
   width = 0; height = 0;
   for (i = 0; i < n_crtcs; i++)
     {
-      GfCrtcInfo *crtc_info = crtcs[i];
-      GfCrtc *crtc = crtc_info->crtc;
+      GfCrtcAssignment *crtc_assignment = crtcs[i];
+      GfCrtc *crtc = crtc_assignment->crtc;
 
-      crtc->is_dirty = TRUE;
-
-      if (crtc_info->mode == NULL)
+      if (crtc_assignment->mode == NULL)
         continue;
 
-      if (gf_monitor_transform_is_rotated (crtc_info->transform))
-        {
-          width = MAX (width, crtc_info->x + crtc_info->mode->height);
-          height = MAX (height, crtc_info->y + crtc_info->mode->width);
-        }
-      else
-        {
-          width = MAX (width, crtc_info->x + crtc_info->mode->width);
-          height = MAX (height, crtc_info->y + crtc_info->mode->height);
-        }
+      to_disable_crtcs = g_list_remove (to_disable_crtcs, crtc);
+
+      width = MAX (width, crtc_assignment->layout.x + crtc_assignment->layout.width);
+      height = MAX (height, crtc_assignment->layout.y + crtc_assignment->layout.height);
     }
 
   /* Second disable all newly disabled CRTCs, or CRTCs that in the previous
@@ -1191,56 +424,50 @@ apply_crtc_assignments (GfMonitorManager  *manager,
    */
   for (i = 0; i < n_crtcs; i++)
     {
-      GfCrtcInfo *crtc_info = crtcs[i];
-      GfCrtc *crtc = crtc_info->crtc;
+      GfCrtcAssignment *crtc_assignment = crtcs[i];
+      GfCrtc *crtc = crtc_assignment->crtc;
+      const GfCrtcConfig *crtc_config;
+      int x2, y2;
 
-      if (crtc_info->mode == NULL ||
-          crtc->rect.x + crtc->rect.width > width ||
-          crtc->rect.y + crtc->rect.height > height)
+      crtc_config = gf_crtc_get_config (crtc);
+      if (crtc_config == NULL)
+        continue;
+
+      x2 = crtc_config->layout.x + crtc_config->layout.width;
+      y2 = crtc_config->layout.y + crtc_config->layout.height;
+
+      if (crtc_assignment->mode == NULL || x2 > width || y2 > height)
         {
           xrandr_set_crtc_config (xrandr,
+                                  crtc,
                                   save_timestamp,
-                                  (xcb_randr_crtc_t) crtc->crtc_id,
+                                  (xcb_randr_crtc_t) gf_crtc_get_id (crtc),
                                   XCB_CURRENT_TIME,
                                   0, 0, XCB_NONE,
                                   XCB_RANDR_ROTATION_ROTATE_0,
                                   NULL, 0);
 
-          crtc->rect.x = 0;
-          crtc->rect.y = 0;
-          crtc->rect.width = 0;
-          crtc->rect.height = 0;
-          crtc->current_mode = NULL;
+          gf_crtc_unset_config (crtc);
         }
     }
 
-  /* Disable CRTCs not mentioned in the list */
-  for (l = manager->crtcs; l; l = l->next)
+  for (l = to_disable_crtcs; l; l = l->next)
     {
       GfCrtc *crtc = l->data;
 
-      if (crtc->is_dirty)
-        {
-          crtc->is_dirty = FALSE;
-          continue;
-        }
-
-      if (crtc->current_mode == NULL)
+      if (!gf_crtc_get_config (crtc))
         continue;
 
       xrandr_set_crtc_config (xrandr,
+                              crtc,
                               save_timestamp,
-                              (xcb_randr_crtc_t) crtc->crtc_id,
+                              (xcb_randr_crtc_t) gf_crtc_get_id (crtc),
                               XCB_CURRENT_TIME,
                               0, 0, XCB_NONE,
                               XCB_RANDR_ROTATION_ROTATE_0,
                               NULL, 0);
 
-      crtc->rect.x = 0;
-      crtc->rect.y = 0;
-      crtc->rect.width = 0;
-      crtc->rect.height = 0;
-      crtc->current_mode = NULL;
+      gf_crtc_unset_config (crtc);
     }
 
   g_assert (width > 0 && height > 0);
@@ -1257,69 +484,73 @@ apply_crtc_assignments (GfMonitorManager  *manager,
 
   for (i = 0; i < n_crtcs; i++)
     {
-      GfCrtcInfo *crtc_info = crtcs[i];
-      GfCrtc *crtc = crtc_info->crtc;
+      GfCrtcAssignment *crtc_assignment = crtcs[i];
+      GfCrtc *crtc = crtc_assignment->crtc;
 
-      if (crtc_info->mode != NULL)
+      if (crtc_assignment->mode != NULL)
         {
-          GfCrtcMode *mode;
+          GfCrtcMode *crtc_mode;
           xcb_randr_output_t *output_ids;
           guint j, n_output_ids;
           xcb_randr_rotation_t rotation;
+          xcb_randr_mode_t mode;
 
-          mode = crtc_info->mode;
+          crtc_mode = crtc_assignment->mode;
 
-          n_output_ids = crtc_info->outputs->len;
+          n_output_ids = crtc_assignment->outputs->len;
           output_ids = g_new0 (xcb_randr_output_t, n_output_ids);
 
           for (j = 0; j < n_output_ids; j++)
             {
               GfOutput *output;
+              GfOutputAssignment *output_assignment;
 
-              output = ((GfOutput**) crtc_info->outputs->pdata)[j];
+              output = ((GfOutput**) crtc_assignment->outputs->pdata)[j];
 
-              output->is_dirty = TRUE;
-              output->crtc = crtc;
+              to_configure_outputs = g_list_remove (to_configure_outputs, output);
 
-              output_ids[j] = output->winsys_id;
+              output_assignment = gf_find_output_assignment (outputs, n_outputs, output);
+              gf_output_assign_crtc (output, crtc, output_assignment);
+
+              output_ids[j] = gf_output_get_id (output);
             }
 
-          rotation = gf_monitor_transform_to_xrandr (crtc_info->transform);
+          rotation = gf_monitor_transform_to_xrandr (crtc_assignment->transform);
+          mode = gf_crtc_mode_get_id (crtc_mode);
+
           if (!xrandr_set_crtc_config (xrandr,
+                                       crtc,
                                        save_timestamp,
-                                       (xcb_randr_crtc_t) crtc->crtc_id,
+                                       (xcb_randr_crtc_t) gf_crtc_get_id (crtc),
                                        XCB_CURRENT_TIME,
-                                       crtc_info->x, crtc_info->y,
-                                       (xcb_randr_mode_t) mode->mode_id,
+                                       crtc_assignment->layout.x,
+                                       crtc_assignment->layout.y,
+                                       mode,
                                        rotation,
                                        output_ids, n_output_ids))
             {
+              const GfCrtcModeInfo *crtc_mode_info;
+
+              crtc_mode_info = gf_crtc_mode_get_info (crtc_mode);
+
               g_warning ("Configuring CRTC %d with mode %d (%d x %d @ %f) at position %d, %d and transform %u failed\n",
-                         (guint) (crtc->crtc_id), (guint) (mode->mode_id),
-                         mode->width, mode->height, (gdouble) mode->refresh_rate,
-                         crtc_info->x, crtc_info->y, crtc_info->transform);
+                         (unsigned) gf_crtc_get_id (crtc),
+                         (unsigned) mode,
+                         crtc_mode_info->width,
+                         crtc_mode_info->height,
+                         (double) crtc_mode_info->refresh_rate,
+                         crtc_assignment->layout.x,
+                         crtc_assignment->layout.y,
+                         crtc_assignment->transform);
 
               g_free (output_ids);
               continue;
             }
 
-          if (gf_monitor_transform_is_rotated (crtc_info->transform))
-            {
-              width = mode->height;
-              height = mode->width;
-            }
-          else
-            {
-              width = mode->width;
-              height = mode->height;
-            }
-
-          crtc->rect.x = crtc_info->x;
-          crtc->rect.y = crtc_info->y;
-          crtc->rect.width = width;
-          crtc->rect.height = height;
-          crtc->current_mode = mode;
-          crtc->transform = crtc_info->transform;
+          gf_crtc_set_config (crtc,
+                              &crtc_assignment->layout,
+                              crtc_mode,
+                              crtc_assignment->transform);
 
           g_free (output_ids);
         }
@@ -1327,44 +558,24 @@ apply_crtc_assignments (GfMonitorManager  *manager,
 
   for (i = 0; i < n_outputs; i++)
     {
-      GfOutputInfo *output_info = outputs[i];
-      GfOutput *output = output_info->output;
+      GfOutputAssignment *output_assignment = outputs[i];
+      GfOutput *output = output_assignment->output;
 
-      if (output_info->is_primary)
-        {
-          XRRSetOutputPrimary (xrandr->xdisplay, xrandr->xroot,
-                               (XID)output_info->output->winsys_id);
-        }
-
-      output_set_presentation_xrandr (xrandr, output_info->output,
-                                      output_info->is_presentation);
-
-      if (output_get_supports_underscanning_xrandr (xrandr, output_info->output))
-        output_set_underscanning_xrandr (xrandr, output_info->output,
-                                         output_info->is_underscanning);
-
-      output->is_primary = output_info->is_primary;
-      output->is_presentation = output_info->is_presentation;
-      output->is_underscanning = output_info->is_underscanning;
+      gf_output_xrandr_apply_mode (GF_OUTPUT_XRANDR (output));
     }
 
-  /* Disable outputs not mentioned in the list */
-  for (l = manager->outputs; l; l = l->next)
+  for (l = to_configure_outputs; l; l = l->next)
     {
       GfOutput *output = l->data;
 
-      if (output->is_dirty)
-        {
-          output->is_dirty = FALSE;
-          continue;
-        }
-
-      output->crtc = NULL;
-      output->is_primary = FALSE;
+      gf_output_unassign_crtc (output);
     }
 
   XUngrabServer (xrandr->xdisplay);
   XFlush (xrandr->xdisplay);
+
+  g_clear_pointer (&to_configure_outputs, g_list_free);
+  g_clear_pointer (&to_disable_crtcs, g_list_free);
 }
 
 static GQuark
@@ -1524,239 +735,65 @@ gf_monitor_manager_xrandr_finalize (GObject *object)
 
   xrandr = GF_MONITOR_MANAGER_XRANDR (object);
 
-  g_clear_pointer (&xrandr->resources, XRRFreeScreenResources);
   g_clear_pointer (&xrandr->supported_scales, g_free);
 
   G_OBJECT_CLASS (gf_monitor_manager_xrandr_parent_class)->finalize (object);
-}
-
-static void
-gf_monitor_manager_xrandr_read_current (GfMonitorManager *manager)
-{
-  GfMonitorManagerXrandr *xrandr;
-  XRRScreenResources *resources;
-  CARD16 dpms_state;
-  BOOL dpms_enabled;
-  gint min_width;
-  gint min_height;
-  Screen *screen;
-  guint i, j;
-  GList *l;
-  RROutput primary_output;
-
-  xrandr = GF_MONITOR_MANAGER_XRANDR (manager);
-
-  if (DPMSCapable (xrandr->xdisplay) &&
-      DPMSInfo (xrandr->xdisplay, &dpms_state, &dpms_enabled) &&
-      dpms_enabled)
-    {
-      switch (dpms_state)
-        {
-          case DPMSModeOn:
-            manager->power_save_mode = GF_POWER_SAVE_ON;
-            break;
-
-          case DPMSModeStandby:
-            manager->power_save_mode = GF_POWER_SAVE_STANDBY;
-            break;
-
-          case DPMSModeSuspend:
-            manager->power_save_mode = GF_POWER_SAVE_SUSPEND;
-            break;
-
-          case DPMSModeOff:
-            manager->power_save_mode = GF_POWER_SAVE_OFF;
-            break;
-
-          default:
-            manager->power_save_mode = GF_POWER_SAVE_UNSUPPORTED;
-            break;
-        }
-    }
-  else
-    {
-      manager->power_save_mode = GF_POWER_SAVE_UNSUPPORTED;
-    }
-
-  XRRGetScreenSizeRange (xrandr->xdisplay, xrandr->xroot,
-                         &min_width, &min_height,
-                         &xrandr->max_screen_width,
-                         &xrandr->max_screen_height);
-
-  /* This is updated because we called RRUpdateConfiguration below */
-  screen = ScreenOfDisplay (xrandr->xdisplay, DefaultScreen (xrandr->xdisplay));
-  manager->screen_width = WidthOfScreen (screen);
-  manager->screen_height = HeightOfScreen (screen);
-
-  g_clear_pointer (&xrandr->resources, XRRFreeScreenResources);
-  resources = XRRGetScreenResourcesCurrent (xrandr->xdisplay, xrandr->xroot);
-
-  if (!resources)
-    return;
-
-  xrandr->resources = resources;
-  manager->outputs = NULL;
-  manager->modes = NULL;
-  manager->crtcs = NULL;
-
-  for (i = 0; i < (guint) resources->nmode; i++)
-    {
-      XRRModeInfo *xmode;
-      GfCrtcMode *mode;
-
-      xmode = &resources->modes[i];
-      mode = g_object_new (GF_TYPE_CRTC_MODE, NULL);
-
-      mode->mode_id = xmode->id;
-      mode->width = xmode->width;
-      mode->height = xmode->height;
-      mode->refresh_rate = (xmode->dotClock / ((gfloat) xmode->hTotal * xmode->vTotal));
-      mode->flags = xmode->modeFlags;
-      mode->name = g_strdup_printf ("%dx%d", xmode->width, xmode->height);
-
-      manager->modes = g_list_append (manager->modes, mode);
-    }
-
-  for (i = 0; i < (guint) resources->ncrtc; i++)
-    {
-      XRRCrtcInfo *xrandr_crtc;
-      GfCrtc *crtc;
-
-      xrandr_crtc = XRRGetCrtcInfo (xrandr->xdisplay, resources, resources->crtcs[i]);
-      crtc = g_object_new (GF_TYPE_CRTC, NULL);
-
-      crtc->monitor_manager = manager;
-      crtc->crtc_id = resources->crtcs[i];
-      crtc->rect.x = xrandr_crtc->x;
-      crtc->rect.y = xrandr_crtc->y;
-      crtc->rect.width = xrandr_crtc->width;
-      crtc->rect.height = xrandr_crtc->height;
-      crtc->is_dirty = FALSE;
-      crtc->transform = gf_monitor_transform_from_xrandr (xrandr_crtc->rotation);
-      crtc->all_transforms = gf_monitor_transform_from_xrandr_all (xrandr_crtc->rotations);
-
-      for (j = 0; j < (guint) resources->nmode; j++)
-        {
-          if (resources->modes[j].id == xrandr_crtc->mode)
-            {
-              crtc->current_mode = g_list_nth_data (manager->modes, j);
-              break;
-            }
-        }
-
-      manager->crtcs = g_list_append (manager->crtcs, crtc);
-      XRRFreeCrtcInfo (xrandr_crtc);
-    }
-
-  primary_output = XRRGetOutputPrimary (xrandr->xdisplay, xrandr->xroot);
-
-  for (i = 0; i < (guint) resources->noutput; i++)
-    {
-      XRROutputInfo *xrandr_output;
-      GfOutput *output;
-
-      xrandr_output = XRRGetOutputInfo (xrandr->xdisplay, resources,
-                                        resources->outputs[i]);
-
-      if (!xrandr_output)
-        continue;
-
-      if (xrandr_output->connection != RR_Disconnected)
-        {
-          GBytes *edid;
-
-          output = g_object_new (GF_TYPE_OUTPUT, NULL);
-          output->monitor_manager = manager;
-
-          output->winsys_id = resources->outputs[i];
-          output->name = g_strdup (xrandr_output->name);
-
-          edid = read_output_edid (xrandr, output->winsys_id);
-          gf_output_parse_edid (output, edid);
-          g_bytes_unref (edid);
-
-          output->width_mm = xrandr_output->mm_width;
-          output->height_mm = xrandr_output->mm_height;
-          output->hotplug_mode_update = output_get_hotplug_mode_update (xrandr, output);
-          output->suggested_x = output_get_suggested_x (xrandr, output);
-          output->suggested_y = output_get_suggested_y (xrandr, output);
-          output->connector_type = output_get_connector_type (xrandr, output);
-
-          output_get_tile_info (xrandr, output);
-          output_get_modes (manager, output, xrandr_output);
-          output_get_crtcs (manager, output, xrandr_output);
-
-          output->n_possible_clones = xrandr_output->nclone;
-          output->possible_clones = g_new0 (GfOutput *, output->n_possible_clones);
-
-          /* We can build the list of clones now, because we don't have
-           * the list of outputs yet, so temporarily set the pointers to
-           * the bare XIDs, and then we'll fix them in a second pass
-           */
-          for (j = 0; j < (guint) xrandr_output->nclone; j++)
-            {
-              output->possible_clones[j] = GINT_TO_POINTER (xrandr_output->clones[j]);
-            }
-
-          output->is_primary = ((XID) output->winsys_id == primary_output);
-          output->is_presentation = output_get_presentation_xrandr (xrandr, output);
-          output->is_underscanning = output_get_underscanning_xrandr (xrandr, output);
-          output->supports_underscanning = output_get_supports_underscanning_xrandr (xrandr, output);
-
-          output_get_backlight_limits_xrandr (xrandr, output);
-
-          if (!(output->backlight_min == 0 && output->backlight_max == 0))
-            output->backlight = output_get_backlight_xrandr (xrandr, output);
-          else
-            output->backlight = -1;
-
-          if (output->n_modes == 0 || output->n_possible_crtcs == 0)
-            g_object_unref (output);
-          else
-            manager->outputs = g_list_prepend (manager->outputs, output);
-        }
-
-      XRRFreeOutputInfo (xrandr_output);
-    }
-
-  /* Sort the outputs for easier handling in GfMonitorConfig */
-  manager->outputs = g_list_sort (manager->outputs, compare_outputs);
-
-  /* Now fix the clones */
-  for (l = manager->outputs; l; l = l->next)
-    {
-      GfOutput *output;
-      GList *k;
-
-      output = l->data;
-
-      for (j = 0; j < output->n_possible_clones; j++)
-        {
-          RROutput clone = GPOINTER_TO_INT (output->possible_clones[j]);
-
-          for (k = manager->outputs; k; k = k->next)
-            {
-              GfOutput *possible_clone = k->data;
-
-              if (clone == (XID) possible_clone->winsys_id)
-                {
-                  output->possible_clones[j] = possible_clone;
-                  break;
-                }
-            }
-        }
-    }
 }
 
 static GBytes *
 gf_monitor_manager_xrandr_read_edid (GfMonitorManager *manager,
                                      GfOutput         *output)
 {
-  GfMonitorManagerXrandr *xrandr;
+  return gf_output_xrandr_read_edid (GF_OUTPUT_XRANDR (output));
+}
 
-  xrandr = GF_MONITOR_MANAGER_XRANDR (manager);
+static void
+gf_monitor_manager_xrandr_read_current_state (GfMonitorManager *manager)
+{
+  GfMonitorManagerXrandr *self;
+  CARD16 dpms_state;
+  BOOL dpms_enabled;
+  GfPowerSave power_save_mode;
+  GfMonitorManagerClass *parent_class;
 
-  return read_output_edid (xrandr, output->winsys_id);
+  self = GF_MONITOR_MANAGER_XRANDR (manager);
+
+  if (DPMSCapable (self->xdisplay) &&
+      DPMSInfo (self->xdisplay, &dpms_state, &dpms_enabled) &&
+      dpms_enabled)
+    {
+      switch (dpms_state)
+        {
+          case DPMSModeOn:
+            power_save_mode = GF_POWER_SAVE_ON;
+            break;
+
+          case DPMSModeStandby:
+            power_save_mode = GF_POWER_SAVE_STANDBY;
+            break;
+
+          case DPMSModeSuspend:
+            power_save_mode = GF_POWER_SAVE_SUSPEND;
+            break;
+
+          case DPMSModeOff:
+            power_save_mode = GF_POWER_SAVE_OFF;
+            break;
+
+          default:
+            power_save_mode = GF_POWER_SAVE_UNSUPPORTED;
+            break;
+        }
+    }
+  else
+    {
+      power_save_mode = GF_POWER_SAVE_UNSUPPORTED;
+    }
+
+  gf_monitor_manager_power_save_mode_changed (manager, power_save_mode);
+
+  parent_class = GF_MONITOR_MANAGER_CLASS (gf_monitor_manager_xrandr_parent_class);
+  parent_class->read_current_state (manager);
 }
 
 static void
@@ -1785,8 +822,8 @@ gf_monitor_manager_xrandr_apply_monitors_config (GfMonitorManager        *manage
                                                  GfMonitorsConfigMethod   method,
                                                  GError                 **error)
 {
-  GPtrArray *crtc_infos;
-  GPtrArray *output_infos;
+  GPtrArray *crtc_assignments;
+  GPtrArray *output_assignments;
 
   if (!config)
     {
@@ -1795,7 +832,7 @@ gf_monitor_manager_xrandr_apply_monitors_config (GfMonitorManager        *manage
     }
 
   if (!gf_monitor_config_manager_assign (manager, config,
-                                         &crtc_infos, &output_infos,
+                                         &crtc_assignments, &output_assignments,
                                          error))
     return FALSE;
 
@@ -1810,17 +847,17 @@ gf_monitor_manager_xrandr_apply_monitors_config (GfMonitorManager        *manage
        * just update the logical state.
        */
       if (is_assignments_changed (manager,
-                                  (GfCrtcInfo **) crtc_infos->pdata,
-                                  crtc_infos->len,
-                                  (GfOutputInfo **) output_infos->pdata,
-                                  output_infos->len))
+                                  (GfCrtcAssignment **) crtc_assignments->pdata,
+                                  crtc_assignments->len,
+                                  (GfOutputAssignment **) output_assignments->pdata,
+                                  output_assignments->len))
         {
           apply_crtc_assignments (manager,
                                   TRUE,
-                                  (GfCrtcInfo **) crtc_infos->pdata,
-                                  crtc_infos->len,
-                                  (GfOutputInfo **) output_infos->pdata,
-                                  output_infos->len);
+                                  (GfCrtcAssignment **) crtc_assignments->pdata,
+                                  crtc_assignments->len,
+                                  (GfOutputAssignment **) output_assignments->pdata,
+                                  output_assignments->len);
         }
       else
         {
@@ -1828,8 +865,8 @@ gf_monitor_manager_xrandr_apply_monitors_config (GfMonitorManager        *manage
         }
     }
 
-  g_ptr_array_free (crtc_infos, TRUE);
-  g_ptr_array_free (output_infos, TRUE);
+  g_ptr_array_free (crtc_assignments, TRUE);
+  g_ptr_array_free (output_assignments, TRUE);
 
   return TRUE;
 }
@@ -1875,23 +912,7 @@ gf_monitor_manager_xrandr_change_backlight (GfMonitorManager *manager,
                                             GfOutput         *output,
                                             gint              value)
 {
-  GfMonitorManagerXrandr *xrandr;
-  gint hw_value;
-  Atom atom;
-
-  xrandr = GF_MONITOR_MANAGER_XRANDR (manager);
-
-  hw_value = round ((gdouble) value / 100.0 * output->backlight_max + output->backlight_min);
-  atom = XInternAtom (xrandr->xdisplay, "Backlight", False);
-
-  xcb_randr_change_output_property (XGetXCBConnection (xrandr->xdisplay),
-                                    (XID)output->winsys_id,
-                                    atom, XCB_ATOM_INTEGER, 32,
-                                    XCB_PROP_MODE_REPLACE,
-                                    1, &hw_value);
-
-  /* We're not selecting for property notifies, so update the value immediately */
-  output->backlight = normalize_backlight (output, hw_value);
+  gf_output_xrandr_change_backlight (GF_OUTPUT_XRANDR (output), value);
 }
 
 static void
@@ -1906,7 +927,7 @@ gf_monitor_manager_xrandr_get_crtc_gamma (GfMonitorManager  *manager,
   XRRCrtcGamma *gamma;
 
   xrandr = GF_MONITOR_MANAGER_XRANDR (manager);
-  gamma = XRRGetCrtcGamma (xrandr->xdisplay, (XID) crtc->crtc_id);
+  gamma = XRRGetCrtcGamma (xrandr->xdisplay, (XID) gf_crtc_get_id (crtc));
 
   *size = gamma->size;
   *red = g_memdup (gamma->red, sizeof (gushort) * gamma->size);
@@ -1934,7 +955,7 @@ gf_monitor_manager_xrandr_set_crtc_gamma (GfMonitorManager *manager,
   memcpy (gamma->green, green, sizeof (gushort) * size);
   memcpy (gamma->blue, blue, sizeof (gushort) * size);
 
-  XRRSetCrtcGamma (xrandr->xdisplay, (XID) crtc->crtc_id, gamma);
+  XRRSetCrtcGamma (xrandr->xdisplay, (XID) gf_crtc_get_id (crtc), gamma);
   XRRFreeGamma (gamma);
 }
 
@@ -1987,7 +1008,7 @@ gf_monitor_manager_xrandr_tiled_monitor_added (GfMonitorManager *manager,
     {
       GfOutput *output = l->data;
 
-      monitor_info->outputs[i] = output->winsys_id;
+      monitor_info->outputs[i] = gf_output_get_id (output);
     }
 
   XRRSetMonitor (xrandr->xdisplay, xrandr->xroot, monitor_info);
@@ -2021,7 +1042,7 @@ gf_monitor_manager_xrandr_is_transform_handled (GfMonitorManager   *manager,
                                                 GfCrtc             *crtc,
                                                 GfMonitorTransform  transform)
 {
-  g_warn_if_fail ((crtc->all_transforms & transform) == transform);
+  g_warn_if_fail ((gf_crtc_get_all_transforms (crtc) & transform) == transform);
 
   return TRUE;
 }
@@ -2055,14 +1076,7 @@ gf_monitor_manager_xrandr_calculate_supported_scales (GfMonitorManager          
 static GfMonitorManagerCapability
 gf_monitor_manager_xrandr_get_capabilities (GfMonitorManager *manager)
 {
-  GfMonitorManagerCapability capabilities;
-
-  capabilities = GF_MONITOR_MANAGER_CAPABILITY_NONE;
-
-  capabilities |= GF_MONITOR_MANAGER_CAPABILITY_MIRRORING;
-  capabilities |= GF_MONITOR_MANAGER_CAPABILITY_GLOBAL_SCALE_REQUIRED;
-
-  return capabilities;
+  return GF_MONITOR_MANAGER_CAPABILITY_GLOBAL_SCALE_REQUIRED;
 }
 
 static gboolean
@@ -2071,11 +1085,13 @@ gf_monitor_manager_xrandr_get_max_screen_size (GfMonitorManager *manager,
                                                gint             *max_height)
 {
   GfMonitorManagerXrandr *xrandr;
+  GfGpu *gpu;
 
   xrandr = GF_MONITOR_MANAGER_XRANDR (manager);
+  gpu = get_gpu (xrandr);
 
-  *max_width = xrandr->max_screen_width;
-  *max_height = xrandr->max_screen_height;
+  gf_gpu_xrandr_get_max_screen_size (GF_GPU_XRANDR (gpu),
+                                     max_width, max_height);
 
   return TRUE;
 }
@@ -2099,8 +1115,8 @@ gf_monitor_manager_xrandr_class_init (GfMonitorManagerXrandrClass *xrandr_class)
   object_class->dispose = gf_monitor_manager_xrandr_dispose;
   object_class->finalize = gf_monitor_manager_xrandr_finalize;
 
-  manager_class->read_current = gf_monitor_manager_xrandr_read_current;
   manager_class->read_edid = gf_monitor_manager_xrandr_read_edid;
+  manager_class->read_current_state = gf_monitor_manager_xrandr_read_current_state;
   manager_class->ensure_initial_config = gf_monitor_manager_xrandr_ensure_initial_config;
   manager_class->apply_monitors_config = gf_monitor_manager_xrandr_apply_monitors_config;
   manager_class->set_power_save_mode = gf_monitor_manager_xrandr_set_power_save_mode;
@@ -2122,11 +1138,25 @@ gf_monitor_manager_xrandr_init (GfMonitorManagerXrandr *xrandr)
 {
 }
 
+Display *
+gf_monitor_manager_xrandr_get_xdisplay (GfMonitorManagerXrandr *xrandr)
+{
+  return xrandr->xdisplay;
+}
+
+gboolean
+gf_monitor_manager_xrandr_has_randr15 (GfMonitorManagerXrandr *xrandr)
+{
+  return xrandr->has_randr15;
+}
+
 gboolean
 gf_monitor_manager_xrandr_handle_xevent (GfMonitorManagerXrandr *xrandr,
                                          XEvent                 *event)
 {
   GfMonitorManager *manager;
+  GfGpu *gpu;
+  GfGpuXrandr *gpu_xrandr;
   XRRScreenResources *resources;
 
   manager = GF_MONITOR_MANAGER (xrandr);
@@ -2137,7 +1167,10 @@ gf_monitor_manager_xrandr_handle_xevent (GfMonitorManagerXrandr *xrandr,
   XRRUpdateConfiguration (event);
   gf_monitor_manager_read_current_state (manager);
 
-  resources = xrandr->resources;
+  gpu = get_gpu (xrandr);
+  gpu_xrandr = GF_GPU_XRANDR (gpu);
+  resources = gf_gpu_xrandr_get_resources (gpu_xrandr);
+
   if (!resources)
     return TRUE;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  * Copyright (C) 2017 Red Hat
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,6 +21,7 @@
 
 #include "config.h"
 #include "gf-backend-x11-cm-private.h"
+#include "gf-gpu-xrandr-private.h"
 #include "gf-monitor-manager-xrandr-private.h"
 
 struct _GfBackendX11Cm
@@ -31,7 +32,8 @@ struct _GfBackendX11Cm
 G_DEFINE_TYPE (GfBackendX11Cm, gf_backend_x11_cm, GF_TYPE_BACKEND_X11)
 
 static GfMonitorManager *
-gf_backend_x11_cm_create_monitor_manager (GfBackend *backend)
+gf_backend_x11_cm_create_monitor_manager (GfBackend  *backend,
+                                          GError    **error)
 {
   return g_object_new (GF_TYPE_MONITOR_MANAGER_XRANDR,
                        "backend", backend,
@@ -68,6 +70,15 @@ gf_backend_x11_cm_class_init (GfBackendX11CmClass *x11_cm_class)
 }
 
 static void
-gf_backend_x11_cm_init (GfBackendX11Cm *x11_cm)
+gf_backend_x11_cm_init (GfBackendX11Cm *self)
 {
+  GfGpuXrandr *gpu_xrandr;
+
+  /*
+   * The X server deals with multiple GPUs for us, so we just see what the X
+   * server gives us as one single GPU, even though it may actually be backed
+   * by multiple.
+   */
+  gpu_xrandr = gf_gpu_xrandr_new (GF_BACKEND_X11 (self));
+  gf_backend_add_gpu (GF_BACKEND (self), GF_GPU (gpu_xrandr));
 }

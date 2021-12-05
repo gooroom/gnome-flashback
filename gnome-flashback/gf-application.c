@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2017 Alberts Muktupāvels
+ * Copyright (C) 2014-2020 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,22 +26,19 @@
 #include "liba11y-keyboard/gf-a11y-keyboard.h"
 #include "libaudio-device-selection/gf-audio-device-selection.h"
 #include "libautomount-manager/gsd-automount-manager.h"
-#include "libbluetooth-applet/gf-bluetooth-applet.h"
-#include "libdesktop-background/gf-desktop-background.h"
+#include "libdesktop/gf-desktop.h"
 #include "libend-session-dialog/gf-end-session-dialog.h"
 #include "libidle-monitor/flashback-idle-monitor.h"
 #include "libinput-settings/gf-input-settings.h"
 #include "libinput-sources/gf-input-sources.h"
 #include "libnotifications/gf-notifications.h"
 #include "libpolkit/flashback-polkit.h"
-#include "libpower-applet/gf-power-applet.h"
+#include "libroot-background/gf-root-background.h"
 #include "libscreencast/gf-screencast.h"
 #include "libscreensaver/gf-screensaver.h"
 #include "libscreenshot/gf-screenshot.h"
 #include "libshell/flashback-shell.h"
-#include "libsound-applet/gf-sound-applet.h"
 #include "libstatus-notifier-watcher/gf-status-notifier-watcher.h"
-#include "libworkarounds/gf-workarounds.h"
 
 struct _GfApplication
 {
@@ -61,24 +58,81 @@ struct _GfApplication
   FlashbackShell          *shell;
   GfA11yKeyboard          *a11y_keyboard;
   GfAudioDeviceSelection  *audio_device_selection;
-  GfBluetoothApplet       *bluetooth;
-  GfDesktopBackground     *background;
+  GfDesktop               *desktop;
   GfEndSessionDialog      *dialog;
   GfInputSettings         *input_settings;
   GfInputSources          *input_sources;
   GfNotifications         *notifications;
-  GfPowerApplet           *power;
+  GfRootBackground        *root_background;
   GfScreencast            *screencast;
   GfScreensaver           *screensaver;
   GfScreenshot            *screenshot;
-  GfSoundApplet           *sound;
   GfStatusNotifierWatcher *status_notifier_watcher;
-  GfWorkarounds           *workarounds;
 
   GtkWidget               *display_change_dialog;
 };
 
 G_DEFINE_TYPE (GfApplication, gf_application, G_TYPE_OBJECT)
+
+typedef struct
+{
+  const char *name;
+  const char *dir;
+  const char *variant;
+  gboolean    has_dark_variant;
+} GfSupportedTheme;
+
+static GfSupportedTheme supported_themes[] =
+  {
+    { "Adwaita", "Adwaita", NULL, TRUE },
+    { "Adwaita-dark", "Adwaita", "dark", FALSE },
+    { "HighContrast", "HighContrast", NULL, FALSE },
+    { "HighContrastInverse", "HighContrast", "inverse", FALSE },
+    { "Yaru", "Yaru", NULL, FALSE },
+    { "Yaru-light", "Yaru", NULL, FALSE },
+    { "Yaru-dark", "Yaru", NULL, FALSE },
+    { NULL, NULL, FALSE, FALSE }
+  };
+
+static char *
+get_theme_resource (GfSupportedTheme *theme,
+                    gboolean          prefer_dark)
+{
+  char *filename;
+  const char *resource_base;
+  char *resource;
+
+  if (theme->variant != NULL)
+    filename = g_strdup_printf ("gnome-flashback-%s.css", theme->variant);
+  else if (theme->has_dark_variant && prefer_dark)
+    filename = g_strdup ("gnome-flashback-dark.css");
+  else
+    filename = g_strdup ("gnome-flashback.css");
+
+  resource_base = "/org/gnome/gnome-flashback/theme";
+  resource = g_strdup_printf ("%s/%s/%s", resource_base, theme->dir, filename);
+  g_free (filename);
+
+  return resource;
+}
+
+static gboolean
+is_theme_supported (const char        *theme_name,
+                    GfSupportedTheme **theme)
+{
+  int i;
+
+  for (i = 0; supported_themes[i].name != NULL; i++)
+    {
+      if (g_strcmp0 (supported_themes[i].name, theme_name) == 0)
+        {
+          *theme = &supported_themes[i];
+          return TRUE;
+        }
+    }
+
+  return FALSE;
+}
 
 static void
 theme_changed (GtkSettings *settings,
@@ -88,9 +142,10 @@ theme_changed (GtkSettings *settings,
   GfApplication *application;
   GdkScreen *screen;
   gchar *theme_name;
-  gboolean dark_theme;
-  guint priority;
+  gboolean prefer_dark;
+  GfSupportedTheme *theme;
   gchar *resource;
+  guint priority;
   GtkCssProvider *css;
 
   application = GF_APPLICATION (user_data);
@@ -102,22 +157,21 @@ theme_changed (GtkSettings *settings,
       g_clear_object (&application->provider);
     }
 
-  g_object_get (settings, "gtk-theme-name", &theme_name, NULL);
-
-  if (g_strcmp0 (theme_name, "Adwaita") != 0 &&
-      g_strcmp0 (theme_name, "HighContrast") != 0)
-    {
-      g_free (theme_name);
-      return;
-    }
-
   g_object_get (settings,
-                "gtk-application-prefer-dark-theme", &dark_theme,
+                "gtk-theme-name", &theme_name,
+                "gtk-application-prefer-dark-theme", &prefer_dark,
                 NULL);
 
-  priority = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION;
-  resource = g_strdup_printf ("/org/gnome/gnome-flashback/theme/%s/gnome-flashback%s.css",
-                              theme_name, dark_theme ? "-dark" : "");
+  if (is_theme_supported (theme_name, &theme))
+    {
+      resource = get_theme_resource (theme, prefer_dark);
+      priority = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION;
+    }
+  else
+    {
+      resource = g_strdup ("/org/gnome/gnome-flashback/theme/fallback.css");
+      priority = GTK_STYLE_PROVIDER_PRIORITY_FALLBACK;
+    }
 
   css = gtk_css_provider_new ();
   application->provider =  GTK_STYLE_PROVIDER (css);
@@ -161,25 +215,28 @@ settings_changed (GSettings   *settings,
   SETTING_CHANGED (shell, "shell", flashback_shell_new)
   SETTING_CHANGED (a11y_keyboard, "a11y-keyboard", gf_a11y_keyboard_new)
   SETTING_CHANGED (audio_device_selection, "audio-device-selection", gf_audio_device_selection_new)
-  SETTING_CHANGED (bluetooth, "bluetooth-applet", gf_bluetooth_applet_new)
-  SETTING_CHANGED (background, "desktop-background", gf_desktop_background_new)
+  SETTING_CHANGED (desktop, "desktop", gf_desktop_new)
   SETTING_CHANGED (dialog, "end-session-dialog", gf_end_session_dialog_new)
   SETTING_CHANGED (input_settings, "input-settings", gf_input_settings_new)
   SETTING_CHANGED (input_sources, "input-sources", gf_input_sources_new)
   SETTING_CHANGED (notifications, "notifications", gf_notifications_new)
-  SETTING_CHANGED (power, "power-applet", gf_power_applet_new)
+  SETTING_CHANGED (root_background, "root-background", gf_root_background_new)
   SETTING_CHANGED (screencast, "screencast", gf_screencast_new)
   SETTING_CHANGED (screensaver, "screensaver", gf_screensaver_new)
   SETTING_CHANGED (screenshot, "screenshot", gf_screenshot_new)
-  SETTING_CHANGED (sound, "sound-applet", gf_sound_applet_new)
   SETTING_CHANGED (status_notifier_watcher, "status-notifier-watcher", gf_status_notifier_watcher_new)
-  SETTING_CHANGED (workarounds, "workarounds", gf_workarounds_new)
 
 #undef SETTING_CHANGED
 
   if (application->input_settings)
     gf_input_settings_set_monitor_manager (application->input_settings,
                                            monitor_manager);
+
+  if (application->screensaver)
+    {
+      gf_screensaver_set_input_sources (application->screensaver,
+                                        application->input_sources);
+    }
 
   if (application->shell)
     flashback_shell_set_monitor_manager (application->shell, monitor_manager);
@@ -208,19 +265,16 @@ gf_application_dispose (GObject *object)
   g_clear_object (&application->shell);
   g_clear_object (&application->a11y_keyboard);
   g_clear_object (&application->audio_device_selection);
-  g_clear_object (&application->bluetooth);
-  g_clear_object (&application->background);
+  g_clear_object (&application->desktop);
   g_clear_object (&application->dialog);
   g_clear_object (&application->input_settings);
   g_clear_object (&application->input_sources);
   g_clear_object (&application->notifications);
-  g_clear_object (&application->power);
+  g_clear_object (&application->root_background);
   g_clear_object (&application->screencast);
   g_clear_object (&application->screenshot);
   g_clear_object (&application->screensaver);
-  g_clear_object (&application->sound);
   g_clear_object (&application->status_notifier_watcher);
-  g_clear_object (&application->workarounds);
 
   g_clear_pointer (&application->display_change_dialog, gtk_widget_destroy);
 
@@ -279,8 +333,8 @@ gf_application_init (GfApplication *application)
   g_signal_connect (settings, "notify::gtk-theme-name",
                     G_CALLBACK (theme_changed), application);
 
-  settings_changed (application->settings, NULL, application);
   theme_changed (settings, NULL, application);
+  settings_changed (application->settings, NULL, application);
 
   application->bus_name = g_bus_own_name (G_BUS_TYPE_SESSION,
                                           "org.gnome.Shell",

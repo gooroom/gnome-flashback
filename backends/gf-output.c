@@ -6,7 +6,7 @@
  * Copyright (C) 2003 Rob Adams
  * Copyright (C) 2004-2006 Elijah Newren
  * Copyright (C) 2013 Red Hat Inc.
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  * Copyright (C) 2017 Red Hat
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,30 +27,132 @@
  */
 
 #include "config.h"
-#include "gf-edid-private.h"
 #include "gf-output-private.h"
 
-G_DEFINE_TYPE (GfOutput, gf_output, G_TYPE_OBJECT)
+typedef struct
+{
+  uint64_t      id;
+
+  GfGpu        *gpu;
+
+  GfOutputInfo *info;
+
+  /* The CRTC driving this output, NULL if the output is not enabled */
+  GfCrtc       *crtc;
+
+  gboolean      is_primary;
+  gboolean      is_presentation;
+
+  gboolean      is_underscanning;
+
+  int           backlight;
+} GfOutputPrivate;
+
+enum
+{
+  PROP_0,
+
+  PROP_ID,
+  PROP_GPU,
+  PROP_INFO,
+
+  LAST_PROP
+};
+
+static GParamSpec *output_properties[LAST_PROP] = { NULL };
+
+G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (GfOutput, gf_output, G_TYPE_OBJECT)
+
+static void
+gf_output_dispose (GObject *object)
+{
+  GfOutput *output;
+  GfOutputPrivate *priv;
+
+  output = GF_OUTPUT (object);
+  priv = gf_output_get_instance_private (output);
+
+  g_clear_object (&priv->crtc);
+
+  G_OBJECT_CLASS (gf_output_parent_class)->dispose (object);
+}
 
 static void
 gf_output_finalize (GObject *object)
 {
   GfOutput *output;
+  GfOutputPrivate *priv;
 
   output = GF_OUTPUT (object);
+  priv = gf_output_get_instance_private (output);
 
-  g_free (output->name);
-  g_free (output->vendor);
-  g_free (output->product);
-  g_free (output->serial);
-  g_free (output->modes);
-  g_free (output->possible_crtcs);
-  g_free (output->possible_clones);
-
-  if (output->driver_notify)
-    output->driver_notify (output);
+  g_clear_pointer (&priv->info, gf_output_info_unref);
 
   G_OBJECT_CLASS (gf_output_parent_class)->finalize (object);
+}
+
+static void
+gf_output_get_property (GObject    *object,
+                        guint       property_id,
+                        GValue     *value,
+                        GParamSpec *pspec)
+{
+  GfOutput *self;
+  GfOutputPrivate *priv;
+
+  self = GF_OUTPUT (object);
+  priv = gf_output_get_instance_private (self);
+
+  switch (property_id)
+    {
+      case PROP_ID:
+        g_value_set_uint64 (value, priv->id);
+        break;
+
+      case PROP_GPU:
+        g_value_set_object (value, priv->gpu);
+        break;
+
+      case PROP_INFO:
+        g_value_set_boxed (value, priv->info);
+        break;
+
+      default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+        break;
+    }
+}
+
+static void
+gf_output_set_property (GObject      *object,
+                        guint         property_id,
+                        const GValue *value,
+                        GParamSpec   *pspec)
+{
+  GfOutput *self;
+  GfOutputPrivate *priv;
+
+  self = GF_OUTPUT (object);
+  priv = gf_output_get_instance_private (self);
+
+  switch (property_id)
+    {
+      case PROP_ID:
+        priv->id = g_value_get_uint64 (value);
+        break;
+
+      case PROP_GPU:
+        priv->gpu = g_value_get_object (value);
+        break;
+
+      case PROP_INFO:
+        priv->info = gf_output_info_ref (g_value_get_boxed (value));
+        break;
+
+      default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+        break;
+    }
 }
 
 static void
@@ -60,73 +162,143 @@ gf_output_class_init (GfOutputClass *output_class)
 
   object_class = G_OBJECT_CLASS (output_class);
 
+  object_class->dispose = gf_output_dispose;
   object_class->finalize = gf_output_finalize;
+  object_class->get_property = gf_output_get_property;
+  object_class->set_property = gf_output_set_property;
+
+  output_properties[PROP_ID] =
+    g_param_spec_uint64 ("id",
+                         "id",
+                         "CRTC id",
+                         0,
+                         UINT64_MAX,
+                         0,
+                         G_PARAM_READWRITE |
+                         G_PARAM_CONSTRUCT_ONLY |
+                         G_PARAM_STATIC_STRINGS);
+
+  output_properties[PROP_GPU] =
+    g_param_spec_object ("gpu",
+                         "GfGpu",
+                         "GfGpu",
+                         GF_TYPE_GPU,
+                         G_PARAM_READWRITE |
+                         G_PARAM_CONSTRUCT_ONLY |
+                         G_PARAM_STATIC_STRINGS);
+
+  output_properties[PROP_INFO] =
+    g_param_spec_boxed ("info",
+                        "info",
+                        "GfOutputInfo",
+                        GF_TYPE_OUTPUT_INFO,
+                        G_PARAM_READWRITE |
+                        G_PARAM_CONSTRUCT_ONLY |
+                        G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties (object_class, LAST_PROP,
+                                     output_properties);
 }
 
 static void
-gf_output_init (GfOutput *output)
+gf_output_init (GfOutput *self)
 {
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  priv->backlight = -1;
 }
 
-GfMonitorManager *
-gf_output_get_monitor_manager (GfOutput *output)
+uint64_t
+gf_output_get_id (GfOutput *self)
 {
-  return output->monitor_manager;
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  return priv->id;
+}
+
+GfGpu *
+gf_output_get_gpu (GfOutput *output)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (output);
+
+  return priv->gpu;
+}
+
+const GfOutputInfo *
+gf_output_get_info (GfOutput *self)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  return priv->info;
+}
+
+const char *
+gf_output_get_name (GfOutput *self)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  return priv->info->name;
 }
 
 void
-gf_output_parse_edid (GfOutput *output,
-                      GBytes   *edid)
+gf_output_assign_crtc (GfOutput                *self,
+                       GfCrtc                   *crtc,
+                       const GfOutputAssignment *output_assignment)
 {
-  MonitorInfo *parsed_edid;
-  gsize len;
+  GfOutputPrivate *priv;
 
-  if (!edid)
-    {
-      output->vendor = g_strdup ("unknown");
-      output->product = g_strdup ("unknown");
-      output->serial = g_strdup ("unknown");
-      return;
-    }
+  priv = gf_output_get_instance_private (self);
 
-  parsed_edid = decode_edid (g_bytes_get_data (edid, &len));
-  if (parsed_edid)
-    {
-      output->vendor = g_strndup (parsed_edid->manufacturer_code, 4);
-      if (!g_utf8_validate (output->vendor, -1, NULL))
-        g_clear_pointer (&output->vendor, g_free);
+  g_assert (crtc);
 
-      output->product = g_strndup (parsed_edid->dsc_product_name, 14);
-      if (!g_utf8_validate (output->product, -1, NULL) || output->product[0] == '\0')
-        {
-          g_clear_pointer (&output->product, g_free);
-          output->product = g_strdup_printf ("0x%04x", (unsigned) parsed_edid->product_code);
-        }
+  g_set_object (&priv->crtc, crtc);
 
-      output->serial = g_strndup (parsed_edid->dsc_serial_number, 14);
-      if (!g_utf8_validate (output->serial, -1, NULL) || output->serial[0] == '\0')
-        {
-          g_clear_pointer (&output->serial, g_free);
-          output->serial = g_strdup_printf ("0x%08x", parsed_edid->serial_number);
-        }
+  priv->is_primary = output_assignment->is_primary;
+  priv->is_presentation = output_assignment->is_presentation;
+  priv->is_underscanning = output_assignment->is_underscanning;
+}
 
-      g_free (parsed_edid);
-    }
+void
+gf_output_unassign_crtc (GfOutput *output)
+{
+  GfOutputPrivate *priv;
 
-  if (!output->vendor)
-    output->vendor = g_strdup ("unknown");
+  priv = gf_output_get_instance_private (output);
 
-  if (!output->product)
-    output->product = g_strdup ("unknown");
+  g_clear_object (&priv->crtc);
 
-  if (!output->serial)
-    output->serial = g_strdup ("unknown");
+  priv->is_primary = FALSE;
+  priv->is_presentation = FALSE;
+}
+
+GfCrtc *
+gf_output_get_assigned_crtc (GfOutput *output)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (output);
+
+  return priv->crtc;
 }
 
 gboolean
 gf_output_is_laptop (GfOutput *output)
 {
-  switch (output->connector_type)
+  const GfOutputInfo *output_info;
+
+  output_info = gf_output_get_info (output);
+
+  switch (output_info->connector_type)
     {
       case GF_CONNECTOR_TYPE_LVDS:
       case GF_CONNECTOR_TYPE_eDP:
@@ -152,4 +324,103 @@ gf_output_is_laptop (GfOutput *output)
     }
 
   return FALSE;
+}
+
+GfMonitorTransform
+gf_output_logical_to_crtc_transform (GfOutput           *output,
+                                     GfMonitorTransform  transform)
+{
+  GfOutputPrivate *priv;
+  GfMonitorTransform panel_orientation_transform;
+
+  priv = gf_output_get_instance_private (output);
+
+  panel_orientation_transform = priv->info->panel_orientation_transform;
+
+  return gf_monitor_transform_transform (transform, panel_orientation_transform);
+}
+
+GfMonitorTransform
+gf_output_crtc_to_logical_transform (GfOutput           *output,
+                                     GfMonitorTransform  transform)
+{
+  GfOutputPrivate *priv;
+  GfMonitorTransform panel_orientation_transform;
+  GfMonitorTransform inverted_transform;
+
+  priv = gf_output_get_instance_private (output);
+
+  panel_orientation_transform = priv->info->panel_orientation_transform;
+  inverted_transform = gf_monitor_transform_invert (panel_orientation_transform);
+
+  return gf_monitor_transform_transform (transform, inverted_transform);
+}
+
+gboolean
+gf_output_is_primary (GfOutput *self)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  return priv->is_primary;
+}
+
+gboolean
+gf_output_is_presentation (GfOutput *self)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  return priv->is_presentation;
+}
+
+gboolean
+gf_output_is_underscanning (GfOutput *self)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  return priv->is_underscanning;
+}
+
+void
+gf_output_set_backlight (GfOutput *self,
+                         int       backlight)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  priv->backlight = backlight;
+}
+
+int
+gf_output_get_backlight (GfOutput *self)
+{
+  GfOutputPrivate *priv;
+
+  priv = gf_output_get_instance_private (self);
+
+  return priv->backlight;
+}
+
+void
+gf_output_add_possible_clone (GfOutput *self,
+                              GfOutput *possible_clone)
+{
+  GfOutputPrivate *priv;
+  GfOutputInfo *output_info;
+
+  priv = gf_output_get_instance_private (self);
+
+  output_info = priv->info;
+
+  output_info->n_possible_clones++;
+  output_info->possible_clones = g_renew (GfOutput *,
+                                          output_info->possible_clones,
+                                          output_info->n_possible_clones);
+  output_info->possible_clones[output_info->n_possible_clones - 1] = possible_clone;
 }

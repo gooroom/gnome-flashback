@@ -18,24 +18,29 @@ libbackends_la_CFLAGS = \
 	$(NULL)
 
 libbackends_la_SOURCES = \
-	gf-backend-native-private.h \
-	gf-backend-native.c \
 	gf-backend-private.h \
 	gf-backend-x11-cm-private.h \
 	gf-backend-x11-cm.c \
-	gf-backend-x11-nested-private.h \
-	gf-backend-x11-nested.c \
 	gf-backend-x11-private.h \
 	gf-backend-x11.c \
 	gf-backend.c \
 	gf-backend.h \
+	gf-crtc-mode-info-private.h \
+	gf-crtc-mode-info.c \
+	gf-crtc-mode-private.h \
 	gf-crtc-mode.c \
 	gf-crtc-private.h \
+	gf-crtc-xrandr-private.h \
+	gf-crtc-xrandr.c \
 	gf-crtc.c \
 	gf-direction.h \
 	gf-display-config-shared.h \
 	gf-edid-parse.c \
 	gf-edid-private.h \
+	gf-gpu-private.h \
+	gf-gpu-xrandr-private.h \
+	gf-gpu-xrandr.c \
+	gf-gpu.c \
 	gf-logical-monitor-config-private.h \
 	gf-logical-monitor-config.c \
 	gf-logical-monitor-private.h \
@@ -48,8 +53,6 @@ libbackends_la_SOURCES = \
 	gf-monitor-config-store-private.h \
 	gf-monitor-config-store.c \
 	gf-monitor-config.c \
-	gf-monitor-manager-dummy-private.h \
-	gf-monitor-manager-dummy.c \
 	gf-monitor-manager-enums-private.h \
 	gf-monitor-manager-kms-private.h \
 	gf-monitor-manager-kms.c \
@@ -66,12 +69,18 @@ libbackends_la_SOURCES = \
 	gf-monitor-spec.c \
 	gf-monitor-tiled-private.h \
 	gf-monitor-tiled.c \
+	gf-monitor-transform.c \
+	gf-monitor-transform.h \
 	gf-monitor.c \
 	gf-monitors-config-private.h \
 	gf-monitors-config.c \
 	gf-orientation-manager-private.h \
 	gf-orientation-manager.c \
+	gf-output-info-private.h \
+	gf-output-info.c \
 	gf-output-private.h \
+	gf-output-xrandr-private.h \
+	gf-output-xrandr.c \
 	gf-output.c \
 	gf-rectangle-private.h \
 	gf-rectangle.c \

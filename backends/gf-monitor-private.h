@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Red Hat
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,9 +22,11 @@
 #ifndef GF_MONITOR_PRIVATE_H
 #define GF_MONITOR_PRIVATE_H
 
+#include "gf-crtc-mode-private.h"
+#include "gf-gpu-private.h"
 #include "gf-monitor-manager-enums-private.h"
 #include "gf-monitor-manager-types-private.h"
-#include "gf-monitor-manager.h"
+#include "gf-output-info-private.h"
 #include "gf-rectangle.h"
 
 G_BEGIN_DECLS
@@ -53,6 +55,8 @@ typedef struct
 
 struct _GfMonitorMode
 {
+  GfMonitor         *monitor;
+
   gchar             *id;
   GfMonitorModeSpec  spec;
   GfMonitorCrtcMode *crtc_modes;
@@ -88,134 +92,158 @@ struct _GfMonitorClass
                                           gint               *height);
 };
 
-GfMonitorManager  *gf_monitor_get_monitor_manager        (GfMonitor                  *monitor);
+GfGpu              *gf_monitor_get_gpu                    (GfMonitor                  *monitor);
 
-gboolean           gf_monitor_is_mode_assigned           (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *mode);
+void                gf_monitor_make_display_name          (GfMonitor                  *monitor);
 
-void               gf_monitor_append_output              (GfMonitor                  *monitor,
-                                                          GfOutput                   *output);
+const char         *gf_monitor_get_display_name           (GfMonitor                  *monitor);
 
-void               gf_monitor_set_winsys_id              (GfMonitor                  *monitor,
-                                                          glong                       winsys_id);
+gboolean            gf_monitor_is_mode_assigned           (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *mode);
 
-void               gf_monitor_set_preferred_mode         (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *mode);
+void                gf_monitor_append_output              (GfMonitor                  *monitor,
+                                                           GfOutput                   *output);
 
-void               gf_monitor_generate_spec              (GfMonitor                  *monitor);
+void                gf_monitor_set_winsys_id              (GfMonitor                  *monitor,
+                                                           glong                       winsys_id);
 
-gboolean           gf_monitor_add_mode                   (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *monitor_mode,
-                                                          gboolean                    replace);
+void                gf_monitor_set_preferred_mode         (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *mode);
 
-void               gf_monitor_mode_free                  (GfMonitorMode              *monitor_mode);
+GfMonitorModeSpec   gf_monitor_create_spec                (GfMonitor                  *monitor,
+                                                           int                         width,
+                                                           int                         height,
+                                                           GfCrtcMode                 *crtc_mode);
 
-gchar             *gf_monitor_mode_spec_generate_id      (GfMonitorModeSpec          *spec);
+const GfOutputInfo *gf_monitor_get_main_output_info       (GfMonitor                  *self);
 
-GfMonitorSpec     *gf_monitor_get_spec                   (GfMonitor                  *monitor);
+void                gf_monitor_generate_spec              (GfMonitor                  *monitor);
 
-gboolean           gf_monitor_is_active                  (GfMonitor                  *monitor);
+gboolean            gf_monitor_add_mode                   (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *monitor_mode,
+                                                           gboolean                    replace);
 
-GfOutput          *gf_monitor_get_main_output            (GfMonitor                  *monitor);
+void                gf_monitor_mode_free                  (GfMonitorMode              *monitor_mode);
 
-gboolean           gf_monitor_is_primary                 (GfMonitor                  *monitor);
+gchar              *gf_monitor_mode_spec_generate_id      (GfMonitorModeSpec          *spec);
 
-gboolean           gf_monitor_supports_underscanning     (GfMonitor                  *monitor);
+GfMonitorSpec      *gf_monitor_get_spec                   (GfMonitor                  *monitor);
 
-gboolean           gf_monitor_is_underscanning           (GfMonitor                  *monitor);
+gboolean            gf_monitor_is_active                  (GfMonitor                  *monitor);
 
-gboolean           gf_monitor_is_laptop_panel            (GfMonitor                  *monitor);
+GfOutput           *gf_monitor_get_main_output            (GfMonitor                  *monitor);
 
-gboolean           gf_monitor_is_same_as                 (GfMonitor                  *monitor,
-                                                          GfMonitor                  *other_monitor);
+gboolean            gf_monitor_is_primary                 (GfMonitor                  *monitor);
 
-GList             *gf_monitor_get_outputs                (GfMonitor                  *monitor);
+gboolean            gf_monitor_supports_underscanning     (GfMonitor                  *monitor);
 
-void               gf_monitor_get_current_resolution     (GfMonitor                  *monitor,
-                                                          int                        *width,
-                                                          int                        *height);
+gboolean            gf_monitor_is_underscanning           (GfMonitor                  *monitor);
 
-void               gf_monitor_derive_layout              (GfMonitor                  *monitor,
-                                                          GfRectangle                *layout);
+gboolean            gf_monitor_is_laptop_panel            (GfMonitor                  *monitor);
 
-void               gf_monitor_get_physical_dimensions    (GfMonitor                  *monitor,
-                                                          gint                       *width_mm,
-                                                          gint                       *height_mm);
+gboolean            gf_monitor_is_same_as                 (GfMonitor                  *monitor,
+                                                           GfMonitor                  *other_monitor);
 
-const gchar       *gf_monitor_get_connector              (GfMonitor                  *monitor);
+GList              *gf_monitor_get_outputs                (GfMonitor                  *monitor);
 
-const gchar       *gf_monitor_get_vendor                 (GfMonitor                  *monitor);
+void                gf_monitor_get_current_resolution     (GfMonitor                  *monitor,
+                                                           int                        *width,
+                                                           int                        *height);
 
-const gchar       *gf_monitor_get_product                (GfMonitor                  *monitor);
+void                gf_monitor_derive_layout              (GfMonitor                  *monitor,
+                                                           GfRectangle                *layout);
 
-const gchar       *gf_monitor_get_serial                 (GfMonitor                  *monitor);
+void                gf_monitor_get_physical_dimensions    (GfMonitor                  *monitor,
+                                                           gint                       *width_mm,
+                                                           gint                       *height_mm);
 
-GfConnectorType    gf_monitor_get_connector_type         (GfMonitor                  *monitor);
+const gchar        *gf_monitor_get_connector              (GfMonitor                  *monitor);
 
-gboolean           gf_monitor_get_suggested_position     (GfMonitor                  *monitor,
-                                                          gint                       *x,
-                                                          gint                       *y);
+const gchar        *gf_monitor_get_vendor                 (GfMonitor                  *monitor);
 
-GfLogicalMonitor  *gf_monitor_get_logical_monitor        (GfMonitor                  *monitor);
+const gchar        *gf_monitor_get_product                (GfMonitor                  *monitor);
 
-GfMonitorMode     *gf_monitor_get_mode_from_id           (GfMonitor                  *monitor,
-                                                          const gchar                *monitor_mode_id);
+const gchar        *gf_monitor_get_serial                 (GfMonitor                  *monitor);
 
-GfMonitorMode     *gf_monitor_get_mode_from_spec         (GfMonitor                  *monitor,
-                                                          GfMonitorModeSpec          *monitor_mode_spec);
+GfConnectorType     gf_monitor_get_connector_type         (GfMonitor                  *monitor);
 
-GfMonitorMode     *gf_monitor_get_preferred_mode         (GfMonitor                  *monitor);
+GfMonitorTransform  gf_monitor_logical_to_crtc_transform  (GfMonitor                  *monitor,
+                                                           GfMonitorTransform          transform);
 
-GfMonitorMode     *gf_monitor_get_current_mode           (GfMonitor                  *monitor);
+GfMonitorTransform  gf_monitor_crtc_to_logical_transform  (GfMonitor                  *monitor,
+                                                           GfMonitorTransform          transform);
 
-void               gf_monitor_derive_current_mode        (GfMonitor                  *monitor);
+gboolean            gf_monitor_get_suggested_position     (GfMonitor                  *monitor,
+                                                           gint                       *x,
+                                                           gint                       *y);
 
-void               gf_monitor_set_current_mode           (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *mode);
+GfLogicalMonitor   *gf_monitor_get_logical_monitor        (GfMonitor                  *monitor);
 
-GList             *gf_monitor_get_modes                  (GfMonitor                  *monitor);
+GfMonitorMode      *gf_monitor_get_mode_from_id           (GfMonitor                  *monitor,
+                                                           const gchar                *monitor_mode_id);
 
-void               gf_monitor_calculate_crtc_pos         (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *monitor_mode,
-                                                          GfOutput                   *output,
-                                                          GfMonitorTransform          crtc_transform,
-                                                          gint                       *out_x,
-                                                          gint                       *out_y);
+GfMonitorMode      *gf_monitor_get_mode_from_spec         (GfMonitor                  *monitor,
+                                                           GfMonitorModeSpec          *monitor_mode_spec);
 
-gfloat             gf_monitor_calculate_mode_scale       (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *monitor_mode);
+GfMonitorMode      *gf_monitor_get_preferred_mode         (GfMonitor                  *monitor);
 
-gfloat            *gf_monitor_calculate_supported_scales (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *monitor_mode,
-                                                          GfMonitorScalesConstraint   constraints,
-                                                          gint                       *n_supported_scales);
+GfMonitorMode      *gf_monitor_get_current_mode           (GfMonitor                  *monitor);
 
-const gchar       *gf_monitor_mode_get_id                (GfMonitorMode              *monitor_mode);
+void                gf_monitor_derive_current_mode        (GfMonitor                  *monitor);
 
-GfMonitorModeSpec *gf_monitor_mode_get_spec              (GfMonitorMode              *monitor_mode);
+void                gf_monitor_set_current_mode           (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *mode);
 
-void               gf_monitor_mode_get_resolution        (GfMonitorMode              *monitor_mode,
-                                                          gint                       *width,
-                                                          gint                       *height);
+GList              *gf_monitor_get_modes                  (GfMonitor                  *monitor);
 
-gfloat             gf_monitor_mode_get_refresh_rate      (GfMonitorMode              *monitor_mode);
+void                gf_monitor_calculate_crtc_pos         (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *monitor_mode,
+                                                           GfOutput                   *output,
+                                                           GfMonitorTransform          crtc_transform,
+                                                           gint                       *out_x,
+                                                           gint                       *out_y);
 
-GfCrtcModeFlag     gf_monitor_mode_get_flags             (GfMonitorMode              *monitor_mode);
+gfloat              gf_monitor_calculate_mode_scale       (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *monitor_mode);
 
-gboolean           gf_monitor_mode_foreach_crtc          (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *mode,
-                                                          GfMonitorModeFunc           func,
-                                                          gpointer                    user_data,
-                                                          GError                    **error);
+gfloat             *gf_monitor_calculate_supported_scales (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *monitor_mode,
+                                                           GfMonitorScalesConstraint   constraints,
+                                                           gint                       *n_supported_scales);
 
-gboolean           gf_monitor_mode_foreach_output        (GfMonitor                  *monitor,
-                                                          GfMonitorMode              *mode,
-                                                          GfMonitorModeFunc           func,
-                                                          gpointer                    user_data,
-                                                          GError                    **error);
+const gchar        *gf_monitor_mode_get_id                (GfMonitorMode              *monitor_mode);
 
-gboolean           gf_verify_monitor_mode_spec           (GfMonitorModeSpec          *mode_spec,
-                                                          GError                    **error);
+GfMonitorModeSpec  *gf_monitor_mode_get_spec              (GfMonitorMode              *monitor_mode);
+
+void                gf_monitor_mode_get_resolution        (GfMonitorMode              *monitor_mode,
+                                                           gint                       *width,
+                                                           gint                       *height);
+
+gfloat              gf_monitor_mode_get_refresh_rate      (GfMonitorMode              *monitor_mode);
+
+GfCrtcModeFlag      gf_monitor_mode_get_flags             (GfMonitorMode              *monitor_mode);
+
+gboolean            gf_monitor_mode_foreach_crtc          (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *mode,
+                                                           GfMonitorModeFunc           func,
+                                                           gpointer                    user_data,
+                                                           GError                    **error);
+
+gboolean            gf_monitor_mode_foreach_output        (GfMonitor                  *monitor,
+                                                           GfMonitorMode              *mode,
+                                                           GfMonitorModeFunc           func,
+                                                           gpointer                    user_data,
+                                                           GError                    **error);
+
+gboolean            gf_monitor_mode_should_be_advertised  (GfMonitorMode              *monitor_mode);
+
+gboolean            gf_verify_monitor_mode_spec           (GfMonitorModeSpec          *mode_spec,
+                                                           GError                    **error);
+
+gboolean            gf_monitor_has_aspect_as_size         (GfMonitor                  *monitor);
+
+void                gf_monitor_set_logical_monitor        (GfMonitor                  *monitor,
+                                                           GfLogicalMonitor           *logical_monitor);
 
 G_END_DECLS
 

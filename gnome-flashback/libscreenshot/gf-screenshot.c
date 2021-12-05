@@ -20,36 +20,40 @@
  */
 
 #include "config.h"
+#include "gf-screenshot.h"
 
+#include <canberra-gtk.h>
+#include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
 #include <X11/extensions/shape.h>
 #include <X11/extensions/Xfixes.h>
 #include <X11/Xatom.h>
 
-#include "gf-dbus-screenshot.h"
+#include "dbus/gf-screenshot-gen.h"
 #include "gf-flashspot.h"
-#include "gf-screenshot.h"
 #include "gf-select-area.h"
 
 #define SCREENSHOT_DBUS_NAME "org.gnome.Shell.Screenshot"
 #define SCREENSHOT_DBUS_PATH "/org/gnome/Shell/Screenshot"
 
-typedef void (*GfInvocationCallback) (GfDBusScreenshot      *dbus_screenshot,
+typedef void (*GfInvocationCallback) (GfScreenshotGen       *screenshot_gen,
                                       GDBusMethodInvocation *invocation,
                                       gboolean               result,
                                       const gchar           *filename);
 
 struct _GfScreenshot
 {
-  GObject           parent;
+  GObject          parent;
 
-  GfDBusScreenshot *dbus_screenshot;
-  gint              bus_name;
+  GfScreenshotGen *screenshot_gen;
+  gint             bus_name;
 
-  GHashTable       *senders;
+  GHashTable      *senders;
 
-  GSettings        *lockdown;
+  GSettings       *lockdown;
+
+  GDateTime       *datetime;
 };
 
 typedef struct
@@ -247,6 +251,37 @@ screenshot_add_cursor (GdkPixbuf      *pixbuf,
     }
 }
 
+static void
+play_sound_effect (const char *event_id,
+                   const char *event_desc)
+{
+  ca_context *c;
+
+  c = ca_gtk_context_get ();
+
+  ca_context_play (c, 0,
+                   CA_PROP_EVENT_ID, event_id,
+                   CA_PROP_EVENT_DESCRIPTION, event_desc,
+                   CA_PROP_CANBERRA_CACHE_CONTROL, "permanent",
+                   NULL);
+}
+
+static void
+save_to_clipboard (GfScreenshot *self,
+                   GdkPixbuf    *pixbuf)
+{
+  GdkDisplay *display;
+  GtkClipboard *clipboard;
+
+  display = gdk_display_get_default ();
+  clipboard = gtk_clipboard_get_for_display (display, GDK_SELECTION_CLIPBOARD);
+
+  play_sound_effect ("screen-capture", _("Screenshot taken"));
+
+  gtk_clipboard_set_image (clipboard, pixbuf);
+  g_object_unref (pixbuf);
+}
+
 static gchar *
 get_unique_path (const gchar *path,
                  const gchar *filename)
@@ -298,7 +333,7 @@ get_filename (const gchar *filename)
 
   path = g_get_user_special_dir (G_USER_DIRECTORY_PICTURES);
 
-  if (!g_file_test (path, G_FILE_TEST_EXISTS))
+  if (path == NULL || !g_file_test (path, G_FILE_TEST_EXISTS))
     {
       path = g_get_home_dir ();
 
@@ -310,21 +345,33 @@ get_filename (const gchar *filename)
 }
 
 static gboolean
-save_screenshot (GdkPixbuf    *pixbuf,
-                 const gchar  *filename_in,
-                 gchar       **filename_out)
+save_screenshot (GfScreenshot  *screenshot,
+                 GdkPixbuf     *pixbuf,
+                 const gchar   *filename_in,
+                 gchar        **filename_out)
 {
   gboolean result;
   gchar *filename;
+  gchar *creation_time;
   GError *error;
 
   if (pixbuf == NULL)
     return FALSE;
 
+  if (filename_in == NULL || *filename_in == '\0')
+    {
+      save_to_clipboard (screenshot, pixbuf);
+      return TRUE;
+    }
+
   filename = get_filename (filename_in);
 
+  creation_time = g_date_time_format (screenshot->datetime, "%c");
+
   error = NULL;
-  result = gdk_pixbuf_save (pixbuf, filename, "png", &error, NULL);
+  result = gdk_pixbuf_save (pixbuf, filename, "png", &error,
+                            "tEXt::Creation Time", creation_time,
+                            NULL);
 
   if (result)
     *filename_out = filename;
@@ -338,6 +385,7 @@ save_screenshot (GdkPixbuf    *pixbuf,
     }
 
   g_object_unref (pixbuf);
+  g_free (creation_time);
 
   return result;
 }
@@ -548,12 +596,13 @@ get_gtk_frame_extents (GdkWindow *window,
   xdisplay = gdk_x11_display_get_xdisplay (display);
   xwindow = gdk_x11_window_get_xid (window);
   gtk_frame_extents = XInternAtom (xdisplay, "_GTK_FRAME_EXTENTS", False);
+  data = NULL;
 
-  gdk_error_trap_push ();
+  gdk_x11_display_error_trap_push (display);
   result = XGetWindowProperty (xdisplay, xwindow, gtk_frame_extents,
                                0, G_MAXLONG, False, XA_CARDINAL,
                                &type, &format, &n_items, &bytes_after, &data);
-  gdk_error_trap_pop_ignored ();
+  gdk_x11_display_error_trap_pop_ignored (display);
 
   if (data == NULL)
     return FALSE;
@@ -662,14 +711,72 @@ window_is_desktop (GdkWindow *window)
   return FALSE;
 }
 
+static Window
+get_active_window (void)
+{
+  GdkDisplay *display;
+  Display *xdisplay;
+  Atom _net_active_window;
+  int status;
+  Atom actual_type;
+  int actual_format;
+  unsigned long n_items;
+  unsigned long bytes_after;
+  unsigned char *prop;
+  Window window;
+
+  display = gdk_display_get_default ();
+  xdisplay = gdk_x11_display_get_xdisplay (display);
+
+  _net_active_window = XInternAtom (xdisplay, "_NET_ACTIVE_WINDOW", True);
+  if (_net_active_window == None)
+    return None;
+
+  gdk_x11_display_error_trap_push (display);
+
+  prop = NULL;
+  status = XGetWindowProperty (xdisplay,
+                               DefaultRootWindow (xdisplay),
+                               _net_active_window,
+                               0,
+                               G_MAXLONG,
+                               False,
+                               XA_WINDOW,
+                               &actual_type,
+                               &actual_format,
+                               &n_items,
+                               &bytes_after,
+                               &prop);
+
+  gdk_x11_display_error_trap_pop_ignored (display);
+
+  if (status != Success ||
+      actual_type != XA_WINDOW)
+    {
+      XFree (prop);
+
+      return None;
+    }
+
+  window = *(Window *) prop;
+  XFree (prop);
+
+  return window;
+}
+
 static GdkWindow *
 find_active_window (void)
 {
-  GdkScreen *screen;
+  Window xwindow;
+  GdkDisplay *display;
 
-  screen = gdk_screen_get_default ();
+  xwindow = get_active_window ();
+  if (xwindow == None)
+    return NULL;
 
-  return gdk_screen_get_active_window (screen);
+  display = gdk_display_get_default ();
+
+  return gdk_x11_window_foreign_new_for_display (display, xwindow);
 }
 
 static GdkWindow *
@@ -791,7 +898,7 @@ take_screenshot_real (GfScreenshot    *screenshot,
           *height -= extents.top + extents.bottom;
         }
 
-      return save_screenshot (pixbuf, filename_in, filename_out);
+      return save_screenshot (screenshot, pixbuf, filename_in, filename_out);
     }
 
   get_window_rect_coords (window, include_frame, &real, &s);
@@ -954,7 +1061,7 @@ take_screenshot_real (GfScreenshot    *screenshot,
       *height = rect.height;
     }
 
-  return save_screenshot (pixbuf, filename_in, filename_out);
+  return save_screenshot (screenshot, pixbuf, filename_in, filename_out);
 }
 
 static void
@@ -1047,7 +1154,7 @@ take_screenshot (GfScreenshot          *screenshot,
 
   if (g_hash_table_lookup (screenshot->senders, sender) != NULL || disabled)
     {
-      callback (screenshot->dbus_screenshot, invocation, FALSE, "");
+      callback (screenshot->screenshot_gen, invocation, FALSE, "");
       return;
     }
 
@@ -1087,7 +1194,7 @@ take_screenshot (GfScreenshot          *screenshot,
       remove_sender (screenshot, sender);
     }
 
-  callback (screenshot->dbus_screenshot, invocation,
+  callback (screenshot->screenshot_gen, invocation,
             result, filename_out ? filename_out : "");
 
   g_free (filename_out);
@@ -1111,54 +1218,47 @@ check_area (gint x,
 }
 
 static gboolean
-handle_screenshot (GfDBusScreenshot      *dbus_screenshot,
+handle_screenshot (GfScreenshotGen       *screenshot_gen,
                    GDBusMethodInvocation *invocation,
                    gboolean               include_cursor,
                    gboolean               flash,
                    const gchar           *filename,
-                   gpointer               user_data)
+                   GfScreenshot          *screenshot)
 {
-  GfScreenshot *screenshot;
   gint scale;
   gint width;
   gint height;
-
-  screenshot = GF_SCREENSHOT (user_data);
 
   scale = get_window_scaling_factor ();
   get_screen_size (&width, &height, scale);
 
   take_screenshot (screenshot, invocation, SCREENSHOT_SCREEN,
                    FALSE, include_cursor, 0, 0, width, height,
-                   gf_dbus_screenshot_complete_screenshot,
+                   gf_screenshot_gen_complete_screenshot,
                    flash, filename);
 
   return TRUE;
 }
 
 static gboolean
-handle_screenshot_window (GfDBusScreenshot      *dbus_screenshot,
+handle_screenshot_window (GfScreenshotGen       *screenshot_gen,
                           GDBusMethodInvocation *invocation,
                           gboolean               include_frame,
                           gboolean               include_cursor,
                           gboolean               flash,
                           const gchar           *filename,
-                          gpointer               user_data)
+                          GfScreenshot          *screenshot)
 {
-  GfScreenshot *screenshot;
-
-  screenshot = GF_SCREENSHOT (user_data);
-
   take_screenshot (screenshot, invocation, SCREENSHOT_WINDOW,
                    include_frame, include_cursor, 0, 0, 0, 0,
-                   gf_dbus_screenshot_complete_screenshot_window,
+                   gf_screenshot_gen_complete_screenshot_window,
                    flash, filename);
 
   return TRUE;
 }
 
 static gboolean
-handle_screenshot_area (GfDBusScreenshot      *dbus_screenshot,
+handle_screenshot_area (GfScreenshotGen       *screenshot_gen,
                         GDBusMethodInvocation *invocation,
                         gint                   x,
                         gint                   y,
@@ -1166,12 +1266,8 @@ handle_screenshot_area (GfDBusScreenshot      *dbus_screenshot,
                         gint                   height,
                         gboolean               flash,
                         const gchar           *filename,
-                        gpointer               user_data)
+                        GfScreenshot          *screenshot)
 {
-  GfScreenshot *screenshot;
-
-  screenshot = GF_SCREENSHOT (user_data);
-
   if (!check_area (x, y, width, height))
     {
       g_dbus_method_invocation_return_error (invocation, G_IO_ERROR,
@@ -1183,14 +1279,14 @@ handle_screenshot_area (GfDBusScreenshot      *dbus_screenshot,
 
   take_screenshot (screenshot, invocation, SCREENSHOT_AREA,
                    FALSE, FALSE, x, y, width, height,
-                   gf_dbus_screenshot_complete_screenshot_area,
+                   gf_screenshot_gen_complete_screenshot_area,
                    flash, filename);
 
   return TRUE;
 }
 
 static gboolean
-handle_flash_area (GfDBusScreenshot      *dbus_screenshot,
+handle_flash_area (GfScreenshotGen       *screenshot_gen,
                    GDBusMethodInvocation *invocation,
                    gint                   x,
                    gint                   y,
@@ -1213,13 +1309,13 @@ handle_flash_area (GfDBusScreenshot      *dbus_screenshot,
   gf_flashspot_fire (flashspot, x, y, width, height);
   g_object_unref (flashspot);
 
-  gf_dbus_screenshot_complete_flash_area (dbus_screenshot, invocation);
+  gf_screenshot_gen_complete_flash_area (screenshot_gen, invocation);
 
   return TRUE;
 }
 
 static gboolean
-handle_select_area (GfDBusScreenshot      *dbus_screenshot,
+handle_select_area (GfScreenshotGen       *screenshot_gen,
                     GDBusMethodInvocation *invocation,
                     gpointer               user_data)
 {
@@ -1229,6 +1325,7 @@ handle_select_area (GfDBusScreenshot      *dbus_screenshot,
   gint width;
   gint height;
   gboolean selected;
+  GdkDisplay *display;
 
   select_area = gf_select_area_new ();
   x = y = width = height = 0;
@@ -1236,7 +1333,8 @@ handle_select_area (GfDBusScreenshot      *dbus_screenshot,
   selected = gf_select_area_select (select_area, &x, &y, &width, &height);
   g_object_unref (select_area);
 
-  gdk_flush ();
+  display = gdk_display_get_default ();
+  gdk_display_flush (display);
 
   if (selected)
     {
@@ -1245,8 +1343,8 @@ handle_select_area (GfDBusScreenshot      *dbus_screenshot,
        */
       g_usleep (G_USEC_PER_SEC / 5);
 
-      gf_dbus_screenshot_complete_select_area (dbus_screenshot, invocation,
-                                               x, y, width, height);
+      gf_screenshot_gen_complete_select_area (screenshot_gen, invocation,
+                                              x, y, width, height);
     }
   else
     {
@@ -1264,25 +1362,25 @@ bus_acquired_handler (GDBusConnection *connection,
                       gpointer         user_data)
 {
   GfScreenshot *screenshot;
-  GfDBusScreenshot *dbus_screenshot;
+  GfScreenshotGen *screenshot_gen;
   GDBusInterfaceSkeleton *skeleton;
   GError *error;
   gboolean exported;
 
   screenshot = GF_SCREENSHOT (user_data);
 
-  dbus_screenshot = screenshot->dbus_screenshot;
-  skeleton = G_DBUS_INTERFACE_SKELETON (dbus_screenshot);
+  screenshot_gen = screenshot->screenshot_gen;
+  skeleton = G_DBUS_INTERFACE_SKELETON (screenshot_gen);
 
-  g_signal_connect (dbus_screenshot, "handle-screenshot",
+  g_signal_connect (screenshot_gen, "handle-screenshot",
                     G_CALLBACK (handle_screenshot), screenshot);
-  g_signal_connect (dbus_screenshot, "handle-screenshot-window",
+  g_signal_connect (screenshot_gen, "handle-screenshot-window",
                     G_CALLBACK (handle_screenshot_window), screenshot);
-  g_signal_connect (dbus_screenshot, "handle-screenshot-area",
+  g_signal_connect (screenshot_gen, "handle-screenshot-area",
                     G_CALLBACK (handle_screenshot_area), screenshot);
-  g_signal_connect (dbus_screenshot, "handle-flash-area",
+  g_signal_connect (screenshot_gen, "handle-flash-area",
                     G_CALLBACK (handle_flash_area), screenshot);
-  g_signal_connect (dbus_screenshot, "handle-select-area",
+  g_signal_connect (screenshot_gen, "handle-select-area",
                     G_CALLBACK (handle_select_area), screenshot);
 
   error = NULL;
@@ -1312,12 +1410,12 @@ gf_screenshot_dispose (GObject *object)
       screenshot->bus_name = 0;
     }
 
-  if (screenshot->dbus_screenshot)
+  if (screenshot->screenshot_gen)
     {
-      skeleton = G_DBUS_INTERFACE_SKELETON (screenshot->dbus_screenshot);
+      skeleton = G_DBUS_INTERFACE_SKELETON (screenshot->screenshot_gen);
 
       g_dbus_interface_skeleton_unexport (skeleton);
-      g_clear_object (&screenshot->dbus_screenshot);
+      g_clear_object (&screenshot->screenshot_gen);
     }
 
   if (screenshot->senders)
@@ -1327,6 +1425,8 @@ gf_screenshot_dispose (GObject *object)
     }
 
   g_clear_object (&screenshot->lockdown);
+
+  g_clear_pointer (&screenshot->datetime, g_date_time_unref);
 
   G_OBJECT_CLASS (gf_screenshot_parent_class)->dispose (object);
 }
@@ -1344,7 +1444,7 @@ gf_screenshot_class_init (GfScreenshotClass *screenshot_class)
 static void
 gf_screenshot_init (GfScreenshot *screenshot)
 {
-  screenshot->dbus_screenshot = gf_dbus_screenshot_skeleton_new ();
+  screenshot->screenshot_gen = gf_screenshot_gen_skeleton_new ();
 
   screenshot->bus_name = g_bus_own_name (G_BUS_TYPE_SESSION,
                                          SCREENSHOT_DBUS_NAME,
@@ -1357,6 +1457,8 @@ gf_screenshot_init (GfScreenshot *screenshot)
                                                g_free, NULL);
 
   screenshot->lockdown = g_settings_new ("org.gnome.desktop.lockdown");
+
+  screenshot->datetime = g_date_time_new_now_local ();
 }
 
 GfScreenshot *

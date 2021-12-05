@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Red Hat
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -51,7 +51,9 @@ foreach_crtc (GfMonitor          *monitor,
   ForeachCrtcData *data = user_data;
 
   data->func (data->logical_monitor,
-              monitor_crtc_mode->output->crtc,
+              monitor,
+              monitor_crtc_mode->output,
+              gf_output_get_assigned_crtc (monitor_crtc_mode->output),
               data->user_data);
 
   return TRUE;
@@ -87,22 +89,32 @@ static GfMonitorTransform
 derive_monitor_transform (GfMonitor *monitor)
 {
   GfOutput *main_output;
+  GfCrtc *crtc;
+  const GfCrtcConfig *crtc_config;
+  GfMonitorTransform transform;
 
   main_output = gf_monitor_get_main_output (monitor);
+  crtc = gf_output_get_assigned_crtc (main_output);
+  crtc_config = gf_crtc_get_config (crtc);
+  transform = crtc_config->transform;
 
-  return main_output->crtc->transform;
+  return gf_monitor_crtc_to_logical_transform (monitor, transform);
 }
 
 static void
-gf_logical_monitor_finalize (GObject *object)
+gf_logical_monitor_dispose (GObject *object)
 {
   GfLogicalMonitor *logical_monitor;
 
   logical_monitor = GF_LOGICAL_MONITOR (object);
 
-  g_list_free (logical_monitor->monitors);
+  if (logical_monitor->monitors)
+    {
+      g_list_free_full (logical_monitor->monitors, g_object_unref);
+      logical_monitor->monitors = NULL;
+    }
 
-  G_OBJECT_CLASS (gf_logical_monitor_parent_class)->finalize (object);
+  G_OBJECT_CLASS (gf_logical_monitor_parent_class)->dispose (object);
 }
 
 static void
@@ -112,7 +124,7 @@ gf_logical_monitor_class_init (GfLogicalMonitorClass *logical_monitor_class)
 
   object_class = G_OBJECT_CLASS (logical_monitor_class);
 
-  object_class->finalize = gf_logical_monitor_finalize;
+  object_class->dispose = gf_logical_monitor_dispose;
 }
 
 static void
@@ -138,7 +150,7 @@ gf_logical_monitor_new (GfMonitorManager       *monitor_manager,
   main_output = gf_monitor_get_main_output (first_monitor);
 
   logical_monitor->number = monitor_number;
-  logical_monitor->winsys_id = main_output->winsys_id;
+  logical_monitor->winsys_id = gf_output_get_id (main_output);
   logical_monitor->scale = logical_monitor_config->scale;
   logical_monitor->transform = logical_monitor_config->transform;
   logical_monitor->in_fullscreen = -1;
@@ -171,7 +183,7 @@ gf_logical_monitor_new_derived (GfMonitorManager *monitor_manager,
   main_output = gf_monitor_get_main_output (monitor);
 
   logical_monitor->number = monitor_number;
-  logical_monitor->winsys_id = main_output->winsys_id;
+  logical_monitor->winsys_id = gf_output_get_id (main_output);
   logical_monitor->scale = scale;
   logical_monitor->transform = transform;
   logical_monitor->in_fullscreen = -1;
@@ -192,7 +204,8 @@ gf_logical_monitor_add_monitor (GfLogicalMonitor *logical_monitor,
   GList *l;
 
   is_presentation = logical_monitor->is_presentation;
-  logical_monitor->monitors = g_list_append (logical_monitor->monitors, monitor);
+  logical_monitor->monitors = g_list_append (logical_monitor->monitors,
+                                             g_object_ref (monitor));
 
   for (l = logical_monitor->monitors; l; l = l->next)
     {
@@ -208,14 +221,14 @@ gf_logical_monitor_add_monitor (GfLogicalMonitor *logical_monitor,
           GfOutput *output;
 
           output = l_output->data;
-          is_presentation = is_presentation && output->is_presentation;
-
-          if (output->crtc)
-            output->crtc->logical_monitor = logical_monitor;
+          is_presentation = (is_presentation &&
+                             gf_output_is_presentation (output));
         }
     }
 
   logical_monitor->is_presentation = is_presentation;
+
+  gf_monitor_set_logical_monitor (monitor, logical_monitor);
 }
 
 gboolean

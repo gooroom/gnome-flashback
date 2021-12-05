@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Alberts Muktupāvels
+ * Copyright (C) 2015-2020 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,13 +15,16 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <config.h>
+#include "config.h"
+#include "flashback-shell.h"
+
 #include <gtk/gtk.h>
 #include <libcommon/gf-keybindings.h>
-#include "flashback-dbus-shell.h"
+
+#include "dbus/gf-shell-gen.h"
 #include "flashback-monitor-labeler.h"
 #include "flashback-osd.h"
-#include "flashback-shell.h"
+#include "gf-shell-introspect.h"
 
 #define SHELL_DBUS_NAME "org.gnome.Shell"
 #define SHELL_DBUS_PATH "/org/gnome/Shell"
@@ -50,19 +53,26 @@ struct _FlashbackShell
 
   /* osd */
   FlashbackOsd            *osd;
+
+  GfShellIntrospect       *introspect;
 };
 
 G_DEFINE_TYPE (FlashbackShell, flashback_shell, G_TYPE_OBJECT)
 
 static GVariant *
-build_parameters (guint device_id,
-                  guint timestamp,
-                  guint action_mode)
+build_parameters (const gchar *device_node,
+                  guint        device_id,
+                  guint        timestamp,
+                  guint        action_mode)
 {
   GVariantBuilder *builder;
   GVariant *parameters;
 
   builder = g_variant_builder_new (G_VARIANT_TYPE ("a{sv}"));
+
+  if (device_node != NULL)
+      g_variant_builder_add (builder, "{sv}", "device-node",
+                             g_variant_new_string (device_node));
 
   g_variant_builder_add (builder, "{sv}", "device-id",
                          g_variant_new_uint32 (device_id));
@@ -80,22 +90,27 @@ build_parameters (guint device_id,
 static void
 accelerator_activated (GfKeybindings *keybindings,
                        guint          action,
+                       const gchar   *device_node,
+                       guint          device_id,
+                       guint          timestamp,
                        gpointer       user_data)
 {
 	FlashbackShell *shell;
-	FlashbackDBusShell *dbus_shell;
+	GfShellGen *shell_gen;
 	GVariant *parameters;
 
 	shell = FLASHBACK_SHELL (user_data);
-	dbus_shell = FLASHBACK_DBUS_SHELL (shell->iface);
-	parameters = build_parameters (0, 0, 0);
+	shell_gen = GF_SHELL_GEN (shell->iface);
+	parameters = build_parameters (device_node, device_id, timestamp, 0);
 
-	flashback_dbus_shell_emit_accelerator_activated (dbus_shell, action, parameters);
+	gf_shell_gen_emit_accelerator_activated (shell_gen, action, parameters);
 }
 
 static gint
 real_grab (FlashbackShell *shell,
-           const gchar    *accelerator)
+           const gchar    *accelerator,
+           guint           mode_flags,
+           guint           grab_flags)
 {
   return gf_keybindings_grab (shell->keybindings, accelerator);
 }
@@ -107,8 +122,16 @@ real_ungrab (FlashbackShell *shell,
   return gf_keybindings_ungrab (shell->keybindings, action);
 }
 
+static void
+remove_watch (gpointer key,
+              gpointer value,
+              gpointer user_data)
+{
+  g_bus_unwatch_name (GPOINTER_TO_UINT (value));
+}
+
 static gboolean
-ungrab_accelerator (gpointer key,
+remove_accelerator (gpointer key,
                     gpointer value,
                     gpointer user_data)
 {
@@ -146,7 +169,7 @@ name_vanished_handler (GDBusConnection *connection,
   data->shell = shell;
 
   g_hash_table_foreach_remove (shell->grabbed_accelerators,
-                               ungrab_accelerator, data);
+                               remove_accelerator, data);
   g_free (data);
 
   g_bus_unwatch_name (id);
@@ -156,12 +179,13 @@ name_vanished_handler (GDBusConnection *connection,
 static guint
 grab_accelerator (FlashbackShell *shell,
                   const gchar    *accelerator,
-                  guint           flags,
+                  guint           mode_flags,
+                  guint           grab_flags,
                   const gchar    *sender)
 {
   guint action;
 
-  action = real_grab (shell, accelerator);
+  action = real_grab (shell, accelerator, mode_flags, grab_flags);
   g_hash_table_insert (shell->grabbed_accelerators,
                        GUINT_TO_POINTER (action), g_strdup (sender));
 
@@ -181,54 +205,69 @@ grab_accelerator (FlashbackShell *shell,
 }
 
 static gboolean
-handle_eval (FlashbackDBusShell    *dbus_shell,
+ungrab_accelerator (FlashbackShell *shell,
+                    guint           action,
+                    const gchar    *sender)
+{
+  const gchar *grabbed_by;
+  gboolean success;
+
+  grabbed_by = g_hash_table_lookup (shell->grabbed_accelerators,
+                                    GUINT_TO_POINTER (action));
+
+  if (g_strcmp0 (grabbed_by, sender) != 0)
+    return FALSE;
+
+  success = real_ungrab (shell, action);
+
+  if (success)
+    g_hash_table_remove (shell->grabbed_accelerators, GUINT_TO_POINTER (action));
+
+  return success;
+}
+
+static gboolean
+handle_eval (GfShellGen            *shell_gen,
              GDBusMethodInvocation *invocation,
              const gchar            action,
-             gpointer               user_data)
+             FlashbackShell        *shell)
 {
-  flashback_dbus_shell_complete_eval (dbus_shell, invocation,
-                                      FALSE, "");
+  gf_shell_gen_complete_eval (shell_gen, invocation, FALSE, "");
 
   return TRUE;
 }
 
 static gboolean
-handle_focus_search (FlashbackDBusShell    *dbus_shell,
+handle_focus_search (GfShellGen            *shell_gen,
                      GDBusMethodInvocation *invocation,
-                     gpointer               user_data)
+                     FlashbackShell        *shell)
 {
-  flashback_dbus_shell_complete_focus_search (dbus_shell, invocation);
+  gf_shell_gen_complete_focus_search (shell_gen, invocation);
 
   return TRUE;
 }
 
 static gboolean
-handle_show_osd (FlashbackDBusShell    *dbus_shell,
+handle_show_osd (GfShellGen            *shell_gen,
                  GDBusMethodInvocation *invocation,
                  GVariant              *params,
-                 gpointer               user_data)
+                 FlashbackShell        *shell)
 {
-  FlashbackShell *shell;
+  flashback_osd_show (shell->osd, shell->monitor_manager, params);
 
-  shell = FLASHBACK_SHELL (user_data);
-
-  flashback_osd_show (shell->osd, params);
-
-  flashback_dbus_shell_complete_show_osd (dbus_shell, invocation);
+  gf_shell_gen_complete_show_osd (shell_gen, invocation);
 
   return TRUE;
 }
 
 static gboolean
-handle_show_monitor_labels (FlashbackDBusShell    *dbus_shell,
+handle_show_monitor_labels (GfShellGen            *shell_gen,
                             GDBusMethodInvocation *invocation,
                             GVariant              *params,
-                            gpointer               user_data)
+                            FlashbackShell        *shell)
 {
-  FlashbackShell *shell;
   const gchar *sender;
 
-  shell = FLASHBACK_SHELL (user_data);
   sender = g_dbus_method_invocation_get_sender (invocation);
 
   g_assert (shell->monitor_manager != NULL);
@@ -236,105 +275,77 @@ handle_show_monitor_labels (FlashbackDBusShell    *dbus_shell,
   flashback_monitor_labeler_show (shell->labeler, shell->monitor_manager,
                                   sender, params);
 
-  flashback_dbus_shell_complete_show_monitor_labels (dbus_shell, invocation);
+  gf_shell_gen_complete_show_monitor_labels (shell_gen, invocation);
 
   return TRUE;
 }
 
 static gboolean
-handle_show_monitor_labels2 (FlashbackDBusShell    *dbus_shell,
-                             GDBusMethodInvocation *invocation,
-                             GVariant              *params,
-                             gpointer               user_data)
-{
-  FlashbackShell *shell;
-  const gchar *sender;
-
-  shell = FLASHBACK_SHELL (user_data);
-  sender = g_dbus_method_invocation_get_sender (invocation);
-
-  g_assert (shell->monitor_manager != NULL);
-
-  flashback_monitor_labeler_show2 (shell->labeler, shell->monitor_manager,
-                                   sender, params);
-
-  flashback_dbus_shell_complete_show_monitor_labels2 (dbus_shell, invocation);
-
-  return TRUE;
-}
-
-static gboolean
-handle_hide_monitor_labels (FlashbackDBusShell    *dbus_shell,
+handle_hide_monitor_labels (GfShellGen            *shell_gen,
                             GDBusMethodInvocation *invocation,
-                            gpointer               user_data)
+                            FlashbackShell        *shell)
 {
-  FlashbackShell *shell;
   const gchar *sender;
 
-  shell = FLASHBACK_SHELL (user_data);
   sender = g_dbus_method_invocation_get_sender (invocation);
 
   flashback_monitor_labeler_hide (shell->labeler, sender);
 
-  flashback_dbus_shell_complete_hide_monitor_labels (dbus_shell, invocation);
+  gf_shell_gen_complete_hide_monitor_labels (shell_gen, invocation);
 
   return TRUE;
 }
 
 static gboolean
-handle_focus_app (FlashbackDBusShell    *dbus_shell,
+handle_focus_app (GfShellGen            *shell_gen,
                   GDBusMethodInvocation *invocation,
                   const gchar            id,
-                  gpointer               user_data)
+                  FlashbackShell        *shell)
 {
-  flashback_dbus_shell_complete_focus_app (dbus_shell, invocation);
+  gf_shell_gen_complete_focus_app (shell_gen, invocation);
 
   return TRUE;
 }
 
 static gboolean
-handle_show_applications (FlashbackDBusShell    *dbus_shell,
+handle_show_applications (GfShellGen            *shell_gen,
                           GDBusMethodInvocation *invocation,
-                          gpointer               user_data)
+                          FlashbackShell        *shell)
 {
-  flashback_dbus_shell_complete_show_applications (dbus_shell, invocation);
+  gf_shell_gen_complete_show_applications (shell_gen, invocation);
 
   return TRUE;
 }
 
 static gboolean
-handle_grab_accelerator (FlashbackDBusShell    *dbus_shell,
+handle_grab_accelerator (GfShellGen            *shell_gen,
                          GDBusMethodInvocation *invocation,
                          const gchar           *accelerator,
-                         guint                  flags,
-                         gpointer               user_data)
+                         guint                  mode_flags,
+                         guint                  grab_flags,
+                         FlashbackShell        *shell)
 {
-  FlashbackShell *shell;
   const gchar *sender;
   guint action;
 
-  shell = FLASHBACK_SHELL (user_data);
   sender = g_dbus_method_invocation_get_sender (invocation);
-  action = grab_accelerator (shell, accelerator, flags, sender);
+  action = grab_accelerator (shell, accelerator, mode_flags, grab_flags, sender);
 
-  flashback_dbus_shell_complete_grab_accelerator (dbus_shell, invocation, action);
+  gf_shell_gen_complete_grab_accelerator (shell_gen, invocation, action);
 
   return TRUE;
 }
 
 static gboolean
-handle_grab_accelerators (FlashbackDBusShell    *dbus_shell,
+handle_grab_accelerators (GfShellGen            *shell_gen,
                           GDBusMethodInvocation *invocation,
                           GVariant              *accelerators,
-                          gpointer               user_data)
+                          FlashbackShell        *shell)
 {
-  FlashbackShell *shell;
   GVariantBuilder builder;
   GVariantIter iter;
   GVariant *child;
   const gchar *sender;
-
-  shell = FLASHBACK_SHELL (user_data);
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE("au"));
   g_variant_iter_init (&iter, accelerators);
@@ -344,48 +355,69 @@ handle_grab_accelerators (FlashbackDBusShell    *dbus_shell,
   while ((child = g_variant_iter_next_value (&iter)))
     {
       gchar *accelerator;
-      guint flags;
+      guint mode_flags;
+      guint grab_flags;
       guint action;
 
-      g_variant_get (child, "(su)", &accelerator, &flags);
+      g_variant_get (child, "(suu)", &accelerator, &mode_flags, &grab_flags);
 
-      action = grab_accelerator (shell, accelerator, flags, sender);
+      action = grab_accelerator (shell, accelerator, mode_flags, grab_flags, sender);
       g_variant_builder_add (&builder, "u", action);
 
       g_free (accelerator);
       g_variant_unref (child);
     }
 
-  flashback_dbus_shell_complete_grab_accelerators (dbus_shell, invocation,
-                                                   g_variant_builder_end (&builder));
+  gf_shell_gen_complete_grab_accelerators (shell_gen,
+                                           invocation,
+                                           g_variant_builder_end (&builder));
 
   return TRUE;
 }
 
 static gboolean
-handle_ungrab_accelerator (FlashbackDBusShell    *dbus_shell,
+handle_ungrab_accelerator (GfShellGen            *shell_gen,
                            GDBusMethodInvocation *invocation,
                            guint                  action,
-                           gpointer               user_data)
+                           FlashbackShell        *shell)
 {
-  FlashbackShell *shell;
-  gchar *sender;
-	gboolean success;
+  const gchar *sender;
+  gboolean success;
 
-  shell = FLASHBACK_SHELL (user_data);
-  success = FALSE;
-  sender = (gchar *) g_hash_table_lookup (shell->grabbed_accelerators,
-                                          GUINT_TO_POINTER (action));
+  sender = g_dbus_method_invocation_get_sender (invocation);
+  success = ungrab_accelerator (shell, action, sender);
 
-  if (g_str_equal (sender, g_dbus_method_invocation_get_sender (invocation)))
+  gf_shell_gen_complete_ungrab_accelerator (shell_gen, invocation, success);
+
+  return TRUE;
+}
+
+static gboolean
+handle_ungrab_accelerators (GfShellGen            *shell_gen,
+                            GDBusMethodInvocation *invocation,
+                            GVariant              *actions,
+                            FlashbackShell        *shell)
+{
+  const char *sender;
+  gboolean success;
+  GVariantIter iter;
+  GVariant *child;
+
+  sender = g_dbus_method_invocation_get_sender (invocation);
+  success = TRUE;
+
+  g_variant_iter_init (&iter, actions);
+  while ((child = g_variant_iter_next_value (&iter)))
     {
-      success = real_ungrab (shell, action);
+      guint action;
 
-      if (success)
-        g_hash_table_remove (shell->grabbed_accelerators, GUINT_TO_POINTER (action));
+      g_variant_get (child, "u", &action);
+      g_variant_unref (child);
+
+      success &= ungrab_accelerator (shell, action, sender);
     }
 
-  flashback_dbus_shell_complete_ungrab_accelerator (dbus_shell, invocation, success);
+  gf_shell_gen_complete_ungrab_accelerators (shell_gen, invocation, success);
 
   return TRUE;
 }
@@ -397,11 +429,11 @@ name_appeared_handler (GDBusConnection *connection,
                        gpointer         user_data)
 {
   FlashbackShell *shell;
-  FlashbackDBusShell *skeleton;
+  GfShellGen *skeleton;
   GError *error;
 
   shell = FLASHBACK_SHELL (user_data);
-  skeleton = flashback_dbus_shell_skeleton_new ();
+  skeleton = gf_shell_gen_skeleton_new ();
 
   g_signal_connect (skeleton, "handle-eval",
                     G_CALLBACK (handle_eval), shell);
@@ -411,8 +443,6 @@ name_appeared_handler (GDBusConnection *connection,
                     G_CALLBACK (handle_show_osd), shell);
   g_signal_connect (skeleton, "handle-show-monitor-labels",
                     G_CALLBACK (handle_show_monitor_labels), shell);
-  g_signal_connect (skeleton, "handle-show-monitor-labels2",
-                    G_CALLBACK (handle_show_monitor_labels2), shell);
   g_signal_connect (skeleton, "handle-hide-monitor-labels",
                     G_CALLBACK (handle_hide_monitor_labels), shell);
   g_signal_connect (skeleton, "handle-focus-app",
@@ -425,10 +455,12 @@ name_appeared_handler (GDBusConnection *connection,
                     G_CALLBACK (handle_grab_accelerators), shell);
   g_signal_connect (skeleton, "handle-ungrab-accelerator",
                     G_CALLBACK (handle_ungrab_accelerator), shell);
+  g_signal_connect (skeleton, "handle-ungrab-accelerators",
+                    G_CALLBACK (handle_ungrab_accelerators), shell);
 
-  flashback_dbus_shell_set_mode (skeleton, "");
-  flashback_dbus_shell_set_overview_active (skeleton, FALSE);
-  flashback_dbus_shell_set_shell_version (skeleton, "");
+  gf_shell_gen_set_mode (skeleton, "");
+  gf_shell_gen_set_overview_active (skeleton, FALSE);
+  gf_shell_gen_set_shell_version (skeleton, "");
 
   error = NULL;
   shell->iface = G_DBUS_INTERFACE_SKELETON (skeleton);
@@ -456,6 +488,14 @@ flashback_shell_finalize (GObject *object)
       shell->bus_name = 0;
     }
 
+  if (shell->iface != NULL)
+    {
+      g_dbus_interface_skeleton_unexport (shell->iface);
+
+      g_object_unref (shell->iface);
+      shell->iface = NULL;
+    }
+
   if (shell->grabbed_accelerators)
     {
       g_hash_table_destroy (shell->grabbed_accelerators);
@@ -464,6 +504,7 @@ flashback_shell_finalize (GObject *object)
 
   if (shell->grabbers)
     {
+      g_hash_table_foreach (shell->grabbers, remove_watch, NULL);
       g_hash_table_destroy (shell->grabbers);
       shell->grabbers = NULL;
     }
@@ -471,6 +512,7 @@ flashback_shell_finalize (GObject *object)
   g_clear_object (&shell->keybindings);
   g_clear_object (&shell->labeler);
   g_clear_object (&shell->osd);
+  g_clear_object (&shell->introspect);
 
   G_OBJECT_CLASS (flashback_shell_parent_class)->finalize (object);
 }
@@ -491,12 +533,15 @@ flashback_shell_init (FlashbackShell *shell)
   shell->grabbed_accelerators = g_hash_table_new_full (NULL, NULL, NULL, g_free);
   shell->grabbers = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
-  shell->keybindings = gf_keybindings_new (FALSE);
+  shell->keybindings = gf_keybindings_new ();
+
   g_signal_connect (shell->keybindings, "accelerator-activated",
                     G_CALLBACK (accelerator_activated), shell);
 
   shell->labeler = flashback_monitor_labeler_new ();
   shell->osd = flashback_osd_new ();
+
+  shell->introspect = gf_shell_introspect_new ();
 
   shell->bus_name = g_bus_watch_name (G_BUS_TYPE_SESSION,
                                       SHELL_DBUS_NAME,

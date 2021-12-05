@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2016 Red Hat
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
+ * Copyright (c) 2018 DisplayLink (UK) Ltd.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,10 +37,12 @@
 typedef struct
 {
   GfMonitorManager       *monitor_manager;
+  GfMonitorsConfig       *config;
   GfLogicalMonitorConfig *logical_monitor_config;
   GfMonitorConfig        *monitor_config;
-  GPtrArray              *crtc_infos;
-  GPtrArray              *output_infos;
+  GPtrArray              *crtc_assignments;
+  GPtrArray              *output_assignments;
+  GArray                 *reserved_crtcs;
 } MonitorAssignmentData;
 
 typedef enum
@@ -151,6 +154,37 @@ find_primary_monitor (GfMonitorManager *monitor_manager)
     }
 }
 
+static GfMonitorTransform
+get_monitor_transform (GfMonitorManager *monitor_manager,
+                       GfMonitor        *monitor)
+{
+  GfBackend *backend;
+  GfOrientationManager *orientation_manager;
+
+  if (!gf_monitor_is_laptop_panel (monitor))
+    return GF_MONITOR_TRANSFORM_NORMAL;
+
+  backend = gf_monitor_manager_get_backend (monitor_manager);
+  orientation_manager = gf_backend_get_orientation_manager (backend);
+
+  switch (gf_orientation_manager_get_orientation (orientation_manager))
+    {
+      case GF_ORIENTATION_BOTTOM_UP:
+        return GF_MONITOR_TRANSFORM_180;
+
+      case GF_ORIENTATION_LEFT_UP:
+        return GF_MONITOR_TRANSFORM_90;
+
+      case GF_ORIENTATION_RIGHT_UP:
+        return GF_MONITOR_TRANSFORM_270;
+
+      case GF_ORIENTATION_UNDEFINED:
+      case GF_ORIENTATION_NORMAL:
+      default:
+        return GF_MONITOR_TRANSFORM_NORMAL;
+    }
+}
+
 static GfLogicalMonitorConfig *
 create_preferred_logical_monitor_config (GfMonitorManager           *monitor_manager,
                                          GfMonitor                  *monitor,
@@ -162,6 +196,7 @@ create_preferred_logical_monitor_config (GfMonitorManager           *monitor_man
   GfMonitorMode *mode;
   int width, height;
   float scale;
+  GfMonitorTransform transform;
   GfMonitorConfig *monitor_config;
   GfLogicalMonitorConfig *logical_monitor_config;
 
@@ -179,8 +214,8 @@ create_preferred_logical_monitor_config (GfMonitorManager           *monitor_man
   switch (layout_mode)
     {
       case GF_LOGICAL_MONITOR_LAYOUT_MODE_LOGICAL:
-        width /= scale;
-        height /= scale;
+        width = (int) roundf (width / scale);
+        height = (int) roundf (height / scale);
         break;
 
       case GF_LOGICAL_MONITOR_LAYOUT_MODE_PHYSICAL:
@@ -189,6 +224,15 @@ create_preferred_logical_monitor_config (GfMonitorManager           *monitor_man
     }
 
   monitor_config = gf_monitor_config_new (monitor, mode);
+  transform = get_monitor_transform (monitor_manager, monitor);
+
+  if (gf_monitor_transform_is_rotated (transform))
+    {
+      int temp = width;
+
+      width = height;
+      height = temp;
+    }
 
   logical_monitor_config = g_new0 (GfLogicalMonitorConfig, 1);
   *logical_monitor_config = (GfLogicalMonitorConfig) {
@@ -198,6 +242,7 @@ create_preferred_logical_monitor_config (GfMonitorManager           *monitor_man
       .width = width,
       .height = height
     },
+    .transform = transform,
     .scale = scale,
     .monitor_configs = g_list_append (NULL, monitor_config)
   };
@@ -219,6 +264,7 @@ create_for_switch_config_all_mirror (GfMonitorConfigManager *config_manager)
   GList *modes;
   GList *monitors;
   GList *l;
+  GfMonitorsConfig *monitors_config;
 
   monitors = gf_monitor_manager_get_monitors (monitor_manager);
   monitor = monitors->data;
@@ -311,8 +357,16 @@ create_for_switch_config_all_mirror (GfMonitorConfigManager *config_manager)
   logical_monitor_configs = g_list_append (NULL, logical_monitor_config);
   layout_mode = gf_monitor_manager_get_default_layout_mode (monitor_manager);
 
-  return gf_monitors_config_new (monitor_manager, logical_monitor_configs,
-                                 layout_mode, GF_MONITORS_CONFIG_FLAG_NONE);
+  monitors_config = gf_monitors_config_new (monitor_manager,
+                                            logical_monitor_configs,
+                                            layout_mode,
+                                            GF_MONITORS_CONFIG_FLAG_NONE);
+
+  if (monitors_config)
+    gf_monitors_config_set_switch_config (monitors_config,
+                                          GF_MONITOR_SWITCH_CONFIG_ALL_MIRROR);
+
+  return monitors_config;
 }
 
 static GfMonitorsConfig *
@@ -324,6 +378,7 @@ create_for_switch_config_external (GfMonitorConfigManager *config_manager)
   GfLogicalMonitorLayoutMode layout_mode;
   GList *monitors;
   GList *l;
+  GfMonitorsConfig *monitors_config;
 
   layout_mode = gf_monitor_manager_get_default_layout_mode (monitor_manager);
 
@@ -349,8 +404,16 @@ create_for_switch_config_external (GfMonitorConfigManager *config_manager)
       x += logical_monitor_config->layout.width;
     }
 
-  return gf_monitors_config_new (monitor_manager, logical_monitor_configs,
-                                 layout_mode, GF_MONITORS_CONFIG_FLAG_NONE);
+  monitors_config = gf_monitors_config_new (monitor_manager,
+                                            logical_monitor_configs,
+                                            layout_mode,
+                                            GF_MONITORS_CONFIG_FLAG_NONE);
+
+  if (monitors_config)
+    gf_monitors_config_set_switch_config (monitors_config,
+                                          GF_MONITOR_SWITCH_CONFIG_EXTERNAL);
+
+  return monitors_config;
 }
 
 static GfMonitorsConfig *
@@ -361,6 +424,7 @@ create_for_switch_config_builtin (GfMonitorConfigManager *config_manager)
   GList *logical_monitor_configs;
   GfLogicalMonitorConfig *primary_logical_monitor_config;
   GfMonitor *monitor;
+  GfMonitorsConfig *monitors_config;
 
   monitor = gf_monitor_manager_get_laptop_panel (monitor_manager);
   if (!monitor)
@@ -375,9 +439,108 @@ create_for_switch_config_builtin (GfMonitorConfigManager *config_manager)
   primary_logical_monitor_config->is_primary = TRUE;
   logical_monitor_configs = g_list_append (NULL, primary_logical_monitor_config);
 
-  return gf_monitors_config_new (monitor_manager, logical_monitor_configs,
-                                 layout_mode, GF_MONITORS_CONFIG_FLAG_NONE);
+  monitors_config = gf_monitors_config_new (monitor_manager,
+                                            logical_monitor_configs,
+                                            layout_mode,
+                                            GF_MONITORS_CONFIG_FLAG_NONE);
+
+  if (monitors_config)
+    gf_monitors_config_set_switch_config (monitors_config,
+                                          GF_MONITOR_SWITCH_CONFIG_BUILTIN);
+
+  return monitors_config;
 }
+
+static GList *
+clone_monitor_config_list (GList *configs_in)
+{
+  GList *configs_out;
+  GList *l;
+
+  configs_out = NULL;
+
+  for (l = configs_in; l != NULL; l = l->next)
+    {
+      GfMonitorConfig *config_in;
+      GfMonitorConfig *config_out;
+
+      config_in = l->data;
+
+      config_out = g_new0 (GfMonitorConfig, 1);
+      *config_out = (GfMonitorConfig) {
+        .monitor_spec = gf_monitor_spec_clone (config_in->monitor_spec),
+        .mode_spec = g_memdup (config_in->mode_spec, sizeof (GfMonitorModeSpec)),
+        .enable_underscanning = config_in->enable_underscanning
+      };
+
+      configs_out = g_list_append (configs_out, config_out);
+    }
+
+  return configs_out;
+}
+
+static GList *
+clone_logical_monitor_config_list (GList *configs_in)
+{
+  GList *configs_out;
+  GList *l;
+
+  configs_out = NULL;
+
+  for (l = configs_in; l != NULL; l = l->next)
+    {
+      GfLogicalMonitorConfig *config_in;
+      GfLogicalMonitorConfig *config_out;
+      GList *config_list;
+
+      config_in = l->data;
+
+      config_out = g_memdup (config_in, sizeof (GfLogicalMonitorConfig));
+
+      config_list = clone_monitor_config_list (config_in->monitor_configs);
+      config_out->monitor_configs = config_list;
+
+      configs_out = g_list_append (configs_out, config_out);
+    }
+
+  return configs_out;
+}
+
+static GfLogicalMonitorConfig *
+find_logical_config_for_builtin_display_rotation (GfMonitorConfigManager *config_manager,
+                                                  GList                  *logical_monitor_configs)
+{
+  GfMonitor *panel;
+  GList *l;
+
+  panel = gf_monitor_manager_get_laptop_panel (config_manager->monitor_manager);
+
+  if (panel == NULL || !gf_monitor_is_active (panel))
+    return NULL;
+
+  for (l = logical_monitor_configs; l; l = l->next)
+    {
+      GfLogicalMonitorConfig *logical_monitor_config;
+      GfMonitorConfig *monitor_config;
+
+      logical_monitor_config = l->data;
+
+      /*
+       * We only want to return the config for the panel if it is
+       * configured on its own, so we skip configs which contain clones.
+       */
+      if (g_list_length (logical_monitor_config->monitor_configs) != 1)
+        continue;
+
+      monitor_config = logical_monitor_config->monitor_configs->data;
+      if (gf_monitor_spec_equals (gf_monitor_get_spec (panel),
+                                  monitor_config->monitor_spec))
+        return logical_monitor_config;
+    }
+
+  return NULL;
+}
+
 
 static GfMonitorsConfig *
 create_for_builtin_display_rotation (GfMonitorConfigManager *config_manager,
@@ -388,41 +551,45 @@ create_for_builtin_display_rotation (GfMonitorConfigManager *config_manager,
   GfLogicalMonitorConfig *logical_monitor_config;
   GfLogicalMonitorConfig *current_logical_monitor_config;
   GList *logical_monitor_configs;
+  GList *current_configs;
   GfLogicalMonitorLayoutMode layout_mode;
-  GfMonitorConfig *monitor_config;
-  GfMonitorConfig *current_monitor_config;
-
-  if (!gf_monitor_manager_get_is_builtin_display_on (config_manager->monitor_manager))
-    return NULL;
+  GList *current_monitor_configs;
 
   if (!config_manager->current_config)
     return NULL;
 
-  if (g_list_length (config_manager->current_config->logical_monitor_configs) != 1)
-    return NULL;
+  current_configs = config_manager->current_config->logical_monitor_configs;
+  current_logical_monitor_config = find_logical_config_for_builtin_display_rotation (config_manager,
+                                                                                     current_configs);
 
-  current_logical_monitor_config = config_manager->current_config->logical_monitor_configs->data;
+  if (!current_logical_monitor_config)
+    return NULL;
 
   if (rotate)
     transform = (current_logical_monitor_config->transform + 1) % GF_MONITOR_TRANSFORM_FLIPPED;
+  else
+    {
+      GfMonitor *panel;
+
+      /*
+       * The transform coming from the accelerometer should be applied to
+       * the crtc as is, without taking panel-orientation into account, this
+       * is done so that non panel-orientation aware desktop environments do the
+       * right thing. Mutter corrects for panel-orientation when applying the
+       * transform from a logical-monitor-config, so we must convert here.
+       */
+      panel = gf_monitor_manager_get_laptop_panel (config_manager->monitor_manager);
+      transform = gf_monitor_crtc_to_logical_transform (panel, transform);
+    }
 
   if (current_logical_monitor_config->transform == transform)
     return NULL;
 
-  if (g_list_length (current_logical_monitor_config->monitor_configs) != 1)
-    return NULL;
+  current_monitor_configs = config_manager->current_config->logical_monitor_configs;
+  logical_monitor_configs = clone_logical_monitor_config_list (current_monitor_configs);
 
-  current_monitor_config = current_logical_monitor_config->monitor_configs->data;
-
-  monitor_config = g_new0 (GfMonitorConfig, 1);
-  *monitor_config = (GfMonitorConfig) {
-    .monitor_spec = gf_monitor_spec_clone (current_monitor_config->monitor_spec),
-    .mode_spec = g_memdup (current_monitor_config->mode_spec, sizeof (GfMonitorModeSpec)),
-    .enable_underscanning = current_monitor_config->enable_underscanning
-  };
-
-  logical_monitor_config = g_memdup (current_logical_monitor_config, sizeof (GfLogicalMonitorConfig));
-  logical_monitor_config->monitor_configs = g_list_append (NULL, monitor_config);
+  logical_monitor_config = find_logical_config_for_builtin_display_rotation (config_manager,
+                                                                             logical_monitor_configs);
   logical_monitor_config->transform = transform;
 
   if (gf_monitor_transform_is_rotated (current_logical_monitor_config->transform) !=
@@ -434,7 +601,6 @@ create_for_builtin_display_rotation (GfMonitorConfigManager *config_manager,
       logical_monitor_config->layout.height = temp;
     }
 
-  logical_monitor_configs = g_list_append (NULL, logical_monitor_config);
   layout_mode = config_manager->current_config->layout_mode;
 
   return gf_monitors_config_new (monitor_manager, logical_monitor_configs,
@@ -442,16 +608,37 @@ create_for_builtin_display_rotation (GfMonitorConfigManager *config_manager,
 }
 
 static gboolean
-is_crtc_assigned (GfCrtc    *crtc,
-                  GPtrArray *crtc_infos)
+is_crtc_reserved (GfCrtc *crtc,
+                  GArray *reserved_crtcs)
 {
   unsigned int i;
 
-  for (i = 0; i < crtc_infos->len; i++)
+  for (i = 0; i < reserved_crtcs->len; i++)
     {
-      GfCrtcInfo *assigned_crtc_info = g_ptr_array_index (crtc_infos, i);
+       uint64_t id;
 
-      if (assigned_crtc_info->crtc == crtc)
+       id = g_array_index (reserved_crtcs, uint64_t, i);
+
+       if (id == gf_crtc_get_id (crtc))
+         return TRUE;
+    }
+
+  return FALSE;
+}
+
+static gboolean
+is_crtc_assigned (GfCrtc    *crtc,
+                  GPtrArray *crtc_assignments)
+{
+  unsigned int i;
+
+  for (i = 0; i < crtc_assignments->len; i++)
+    {
+      GfCrtcAssignment *assigned_crtc_assignment;
+
+      assigned_crtc_assignment = g_ptr_array_index (crtc_assignments, i);
+
+      if (assigned_crtc_assignment->crtc == crtc)
         return TRUE;
     }
 
@@ -460,15 +647,39 @@ is_crtc_assigned (GfCrtc    *crtc,
 
 static GfCrtc *
 find_unassigned_crtc (GfOutput  *output,
-                      GPtrArray *crtc_infos)
+                      GPtrArray *crtc_assignments,
+                      GArray    *reserved_crtcs)
 {
+  GfCrtc *crtc;
+  const GfOutputInfo *output_info;
   unsigned int i;
 
-  for (i = 0; i < output->n_possible_crtcs; i++)
-    {
-      GfCrtc *crtc = output->possible_crtcs[i];
+  crtc = gf_output_get_assigned_crtc (output);
+  if (crtc && !is_crtc_assigned (crtc, crtc_assignments))
+    return crtc;
 
-      if (is_crtc_assigned (crtc, crtc_infos))
+  output_info = gf_output_get_info (output);
+
+  /* then try to assign a CRTC that wasn't used */
+  for (i = 0; i < output_info->n_possible_crtcs; i++)
+    {
+      crtc = output_info->possible_crtcs[i];
+
+      if (is_crtc_assigned (crtc, crtc_assignments))
+        continue;
+
+      if (is_crtc_reserved (crtc, reserved_crtcs))
+        continue;
+
+      return crtc;
+    }
+
+  /* finally just give a CRTC that we haven't assigned */
+  for (i = 0; i < output_info->n_possible_crtcs; i++)
+    {
+      crtc = output_info->possible_crtcs[i];
+
+      if (is_crtc_assigned (crtc, crtc_assignments))
         continue;
 
       return crtc;
@@ -489,16 +700,25 @@ assign_monitor_crtc (GfMonitor          *monitor,
   GfCrtc *crtc;
   GfMonitorTransform transform;
   GfMonitorTransform crtc_transform;
+  GfMonitorTransform crtc_hw_transform;
   int crtc_x, crtc_y;
-  GfCrtcInfo *crtc_info;
-  GfOutputInfo *output_info;
+  float x_offset, y_offset;
+  float scale;
+  float width, height;
+  GfCrtcMode *crtc_mode;
+  const GfCrtcModeInfo *crtc_mode_info;
+  GfRectangle crtc_layout;
+  GfCrtcAssignment *crtc_assignment;
+  GfOutputAssignment *output_assignment;
   GfMonitorConfig *first_monitor_config;
   gboolean assign_output_as_primary;
   gboolean assign_output_as_presentation;
 
   output = monitor_crtc_mode->output;
+  crtc = find_unassigned_crtc (output,
+                               data->crtc_assignments,
+                               data->reserved_crtcs);
 
-  crtc = find_unassigned_crtc (output, data->crtc_infos);
   if (!crtc)
     {
       GfMonitorSpec *monitor_spec = gf_monitor_get_spec (monitor);
@@ -511,37 +731,60 @@ assign_monitor_crtc (GfMonitor          *monitor,
     }
 
   transform = data->logical_monitor_config->transform;
+  crtc_transform = gf_monitor_logical_to_crtc_transform (monitor, transform);
   if (gf_monitor_manager_is_transform_handled (data->monitor_manager,
-                                               crtc, transform))
-    crtc_transform = transform;
+                                               crtc,
+                                               crtc_transform))
+    crtc_hw_transform = crtc_transform;
   else
-    crtc_transform = GF_MONITOR_TRANSFORM_NORMAL;
+    crtc_hw_transform = GF_MONITOR_TRANSFORM_NORMAL;
 
   gf_monitor_calculate_crtc_pos (monitor, mode, output, crtc_transform,
                                  &crtc_x, &crtc_y);
 
-  crtc_info = g_slice_new0 (GfCrtcInfo);
-  *crtc_info = (GfCrtcInfo) {
+  x_offset = data->logical_monitor_config->layout.x;
+  y_offset = data->logical_monitor_config->layout.y;
+
+  switch (data->config->layout_mode)
+    {
+      case GF_LOGICAL_MONITOR_LAYOUT_MODE_LOGICAL:
+        scale = data->logical_monitor_config->scale;
+        break;
+
+      case GF_LOGICAL_MONITOR_LAYOUT_MODE_PHYSICAL:
+      default:
+        scale = 1.0;
+        break;
+    }
+
+  crtc_mode = monitor_crtc_mode->crtc_mode;
+  crtc_mode_info = gf_crtc_mode_get_info (crtc_mode);
+
+  if (gf_monitor_transform_is_rotated (crtc_transform))
+    {
+      width = crtc_mode_info->height / scale;
+      height = crtc_mode_info->width / scale;
+    }
+  else
+    {
+      width = crtc_mode_info->width / scale;
+      height = crtc_mode_info->height / scale;
+    }
+
+  crtc_layout.x = (int) roundf (x_offset + (crtc_x / scale));
+  crtc_layout.y = (int) roundf (y_offset + (crtc_y / scale));
+  crtc_layout.width = (int) roundf (width);
+  crtc_layout.height = (int) roundf (height);
+
+  crtc_assignment = g_slice_new0 (GfCrtcAssignment);
+  *crtc_assignment = (GfCrtcAssignment) {
     .crtc = crtc,
-    .mode = monitor_crtc_mode->crtc_mode,
-    .x = crtc_x,
-    .y = crtc_y,
-    .transform = crtc_transform,
+    .mode = crtc_mode,
+    .layout = crtc_layout,
+    .transform = crtc_hw_transform,
     .outputs = g_ptr_array_new ()
   };
-  g_ptr_array_add (crtc_info->outputs, output);
-
-  /*
-   * Currently, GfCrtcInfo are deliberately offset incorrectly to carry over
-   * logical monitor location inside the GfCrtc struct, when in fact this
-   * depends on the framebuffer configuration. This will eventually be negated
-   * when setting the actual KMS mode.
-   *
-   * TODO: Remove this hack when we don't need to rely on GfCrtc to pass
-   * logical monitor state.
-   */
-  crtc_info->x += data->logical_monitor_config->layout.x;
-  crtc_info->y += data->logical_monitor_config->layout.y;
+  g_ptr_array_add (crtc_assignment->outputs, output);
 
   /*
    * Only one output can be marked as primary (due to Xrandr limitation),
@@ -561,26 +804,28 @@ assign_monitor_crtc (GfMonitor          *monitor,
   else
     assign_output_as_presentation = FALSE;
 
-  output_info = g_slice_new0 (GfOutputInfo);
-  *output_info = (GfOutputInfo) {
+  output_assignment = g_slice_new0 (GfOutputAssignment);
+  *output_assignment = (GfOutputAssignment) {
     .output = output,
     .is_primary = assign_output_as_primary,
     .is_presentation = assign_output_as_presentation,
     .is_underscanning = data->monitor_config->enable_underscanning
   };
 
-  g_ptr_array_add (data->crtc_infos, crtc_info);
-  g_ptr_array_add (data->output_infos, output_info);
+  g_ptr_array_add (data->crtc_assignments, crtc_assignment);
+  g_ptr_array_add (data->output_assignments, output_assignment);
 
   return TRUE;
 }
 
 static gboolean
 assign_monitor_crtcs (GfMonitorManager        *manager,
+                      GfMonitorsConfig        *config,
                       GfLogicalMonitorConfig  *logical_monitor_config,
                       GfMonitorConfig         *monitor_config,
-                      GPtrArray               *crtc_infos,
-                      GPtrArray               *output_infos,
+                      GPtrArray               *crtc_assignments,
+                      GPtrArray               *output_assignments,
+                      GArray                  *reserved_crtcs,
                       GError                 **error)
 {
   GfMonitorSpec *monitor_spec = monitor_config->monitor_spec;
@@ -613,10 +858,12 @@ assign_monitor_crtcs (GfMonitorManager        *manager,
 
   data = (MonitorAssignmentData) {
     .monitor_manager = manager,
+    .config = config,
     .logical_monitor_config = logical_monitor_config,
     .monitor_config = monitor_config,
-    .crtc_infos = crtc_infos,
-    .output_infos = output_infos
+    .crtc_assignments = crtc_assignments,
+    .output_assignments = output_assignments,
+    .reserved_crtcs = reserved_crtcs
   };
 
   if (!gf_monitor_mode_foreach_crtc (monitor, monitor_mode,
@@ -629,9 +876,11 @@ assign_monitor_crtcs (GfMonitorManager        *manager,
 
 static gboolean
 assign_logical_monitor_crtcs (GfMonitorManager        *manager,
+                              GfMonitorsConfig        *config,
                               GfLogicalMonitorConfig  *logical_monitor_config,
-                              GPtrArray               *crtc_infos,
-                              GPtrArray               *output_infos,
+                              GPtrArray               *crtc_assignments,
+                              GPtrArray               *output_assignments,
+                              GArray                  *reserved_crtcs,
                               GError                 **error)
 {
   GList *l;
@@ -641,9 +890,12 @@ assign_logical_monitor_crtcs (GfMonitorManager        *manager,
       GfMonitorConfig *monitor_config = l->data;
 
       if (!assign_monitor_crtcs (manager,
+                                 config,
                                  logical_monitor_config,
                                  monitor_config,
-                                 crtc_infos, output_infos,
+                                 crtc_assignments,
+                                 output_assignments,
+                                 reserved_crtcs,
                                  error))
         return FALSE;
     }
@@ -655,21 +907,33 @@ GfMonitorsConfigKey *
 gf_create_monitors_config_key_for_current_state (GfMonitorManager *monitor_manager)
 {
   GfMonitorsConfigKey *config_key;
+  GfMonitorSpec *laptop_monitor_spec;
   GList *l;
   GList *monitor_specs;
 
+  laptop_monitor_spec = NULL;
   monitor_specs = NULL;
   for (l = monitor_manager->monitors; l; l = l->next)
     {
       GfMonitor *monitor = l->data;
       GfMonitorSpec *monitor_spec;
 
-      if (gf_monitor_is_laptop_panel (monitor) &&
-          gf_monitor_manager_is_lid_closed (monitor_manager))
-        continue;
+      if (gf_monitor_is_laptop_panel (monitor))
+        {
+          laptop_monitor_spec = gf_monitor_get_spec (monitor);
+
+          if (gf_monitor_manager_is_lid_closed (monitor_manager))
+            continue;
+        }
 
       monitor_spec = gf_monitor_spec_clone (gf_monitor_get_spec (monitor));
       monitor_specs = g_list_prepend (monitor_specs, monitor_spec);
+    }
+
+  if (!monitor_specs && laptop_monitor_spec)
+    {
+      monitor_specs =
+        g_list_prepend (NULL, gf_monitor_spec_clone (laptop_monitor_spec));
     }
 
   if (!monitor_specs)
@@ -684,16 +948,16 @@ gf_create_monitors_config_key_for_current_state (GfMonitorManager *monitor_manag
 }
 
 static void
-gf_crtc_info_free (GfCrtcInfo *info)
+gf_crtc_assignment_free (GfCrtcAssignment *assignment)
 {
-  g_ptr_array_free (info->outputs, TRUE);
-  g_slice_free (GfCrtcInfo, info);
+  g_ptr_array_free (assignment->outputs, TRUE);
+  g_slice_free (GfCrtcAssignment, assignment);
 }
 
 static void
-gf_output_info_free (GfOutputInfo *info)
+gf_output_assignment_free (GfOutputAssignment *assignment)
 {
-  g_slice_free (GfOutputInfo, info);
+  g_slice_free (GfOutputAssignment, assignment);
 }
 
 static void
@@ -746,33 +1010,74 @@ gf_monitor_config_manager_get_store (GfMonitorConfigManager *config_manager)
 gboolean
 gf_monitor_config_manager_assign (GfMonitorManager  *manager,
                                   GfMonitorsConfig  *config,
-                                  GPtrArray        **out_crtc_infos,
-                                  GPtrArray        **out_output_infos,
+                                  GPtrArray        **out_crtc_assignments,
+                                  GPtrArray        **out_output_assignments,
                                   GError           **error)
 {
-  GPtrArray *crtc_infos;
-  GPtrArray *output_infos;
+  GPtrArray *crtc_assignments;
+  GPtrArray *output_assignments;
+  GArray *reserved_crtcs;
   GList *l;
 
-  crtc_infos = g_ptr_array_new_with_free_func ((GDestroyNotify) gf_crtc_info_free);
-  output_infos = g_ptr_array_new_with_free_func ((GDestroyNotify) gf_output_info_free);
+  crtc_assignments = g_ptr_array_new_with_free_func ((GDestroyNotify) gf_crtc_assignment_free);
+  output_assignments = g_ptr_array_new_with_free_func ((GDestroyNotify) gf_output_assignment_free);
+  reserved_crtcs = g_array_new (FALSE, FALSE, sizeof (uint64_t));
+
+  for (l = config->logical_monitor_configs; l; l = l->next)
+    {
+      GfLogicalMonitorConfig *logical_monitor_config = l->data;
+      GList *k;
+
+      for (k = logical_monitor_config->monitor_configs; k; k = k->next)
+        {
+          GfMonitorConfig *monitor_config = k->data;
+          GfMonitorSpec *monitor_spec = monitor_config->monitor_spec;
+          GfMonitor *monitor;
+          GList *o;
+
+          monitor = gf_monitor_manager_get_monitor_from_spec (manager, monitor_spec);
+
+          for (o = gf_monitor_get_outputs (monitor); o; o = o->next)
+            {
+              GfOutput *output = o->data;
+              GfCrtc *crtc;
+
+              crtc = gf_output_get_assigned_crtc (output);
+              if (crtc)
+                {
+                  uint64_t crtc_id;
+
+                  crtc_id = gf_crtc_get_id (crtc);
+
+                  g_array_append_val (reserved_crtcs, crtc_id);
+                }
+            }
+        }
+    }
 
   for (l = config->logical_monitor_configs; l; l = l->next)
     {
       GfLogicalMonitorConfig *logical_monitor_config = l->data;
 
-      if (!assign_logical_monitor_crtcs (manager, logical_monitor_config,
-                                         crtc_infos, output_infos,
+      if (!assign_logical_monitor_crtcs (manager,
+                                         config,
+                                         logical_monitor_config,
+                                         crtc_assignments,
+                                         output_assignments,
+                                         reserved_crtcs,
                                          error))
         {
-          g_ptr_array_free (crtc_infos, TRUE);
-          g_ptr_array_free (output_infos, TRUE);
+          g_ptr_array_free (crtc_assignments, TRUE);
+          g_ptr_array_free (output_assignments, TRUE);
+          g_array_free (reserved_crtcs, TRUE);
           return FALSE;
         }
     }
 
-  *out_crtc_infos = crtc_infos;
-  *out_output_infos = output_infos;
+  *out_crtc_assignments = crtc_assignments;
+  *out_output_assignments = output_assignments;
+
+  g_array_free (reserved_crtcs, TRUE);
 
   return TRUE;
 }
@@ -821,6 +1126,7 @@ gf_monitor_config_manager_create_linear (GfMonitorConfigManager *config_manager)
   int x;
   GList *monitors;
   GList *l;
+  GfMonitorsConfig *monitors_config;
 
   primary_monitor = find_primary_monitor (monitor_manager);
   if (!primary_monitor)
@@ -861,8 +1167,16 @@ gf_monitor_config_manager_create_linear (GfMonitorConfigManager *config_manager)
       x += logical_monitor_config->layout.width;
     }
 
-  return gf_monitors_config_new (monitor_manager, logical_monitor_configs,
-                                 layout_mode, GF_MONITORS_CONFIG_FLAG_NONE);
+  monitors_config = gf_monitors_config_new (monitor_manager,
+                                            logical_monitor_configs,
+                                            layout_mode,
+                                            GF_MONITORS_CONFIG_FLAG_NONE);
+
+  if (monitors_config)
+    gf_monitors_config_set_switch_config (monitors_config,
+                                          GF_MONITOR_SWITCH_CONFIG_ALL_LINEAR);
+
+  return monitors_config;
 }
 
 GfMonitorsConfig *
@@ -981,7 +1295,11 @@ GfMonitorsConfig *
 gf_monitor_config_manager_create_for_switch_config (GfMonitorConfigManager    *config_manager,
                                                     GfMonitorSwitchConfigType  config_type)
 {
-  GfMonitorManager *monitor_manager = config_manager->monitor_manager;
+  GfMonitorManager *monitor_manager;
+  GfMonitorsConfig *config;
+
+  monitor_manager = config_manager->monitor_manager;
+  config = NULL;
 
   if (!gf_monitor_manager_can_switch_config (monitor_manager))
     return NULL;
@@ -989,16 +1307,20 @@ gf_monitor_config_manager_create_for_switch_config (GfMonitorConfigManager    *c
   switch (config_type)
     {
       case GF_MONITOR_SWITCH_CONFIG_ALL_MIRROR:
-        return create_for_switch_config_all_mirror (config_manager);
+        config = create_for_switch_config_all_mirror (config_manager);
+        break;
 
       case GF_MONITOR_SWITCH_CONFIG_ALL_LINEAR:
-        return gf_monitor_config_manager_create_linear (config_manager);
+        config = gf_monitor_config_manager_create_linear (config_manager);
+        break;
 
       case GF_MONITOR_SWITCH_CONFIG_EXTERNAL:
-        return create_for_switch_config_external (config_manager);
+        config = create_for_switch_config_external (config_manager);
+        break;
 
       case GF_MONITOR_SWITCH_CONFIG_BUILTIN:
-        return create_for_switch_config_builtin (config_manager);
+        config = create_for_switch_config_builtin (config_manager);
+        break;
 
       case GF_MONITOR_SWITCH_CONFIG_UNKNOWN:
       default:
@@ -1006,7 +1328,7 @@ gf_monitor_config_manager_create_for_switch_config (GfMonitorConfigManager    *c
         break;
     }
 
-  return NULL;
+  return config;
 }
 
 void

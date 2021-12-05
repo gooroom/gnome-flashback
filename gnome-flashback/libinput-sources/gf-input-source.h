@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2015 Sebastian Geiger
+ * Copyright (C) 2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,42 +20,56 @@
 #define GF_INPUT_SOURCE_H
 
 #include <glib-object.h>
-#include <ibus-1.0/ibus.h>
 
-#include "gf-ibus-manager.h"
+#define INPUT_SOURCE_TYPE_XKB "xkb"
+#define INPUT_SOURCE_TYPE_IBUS "ibus"
+
+G_BEGIN_DECLS
 
 #define GF_TYPE_INPUT_SOURCE gf_input_source_get_type ()
-G_DECLARE_FINAL_TYPE (GfInputSource, gf_input_source,
-                      GF, INPUT_SOURCE, GObject)
+G_DECLARE_DERIVABLE_TYPE (GfInputSource, gf_input_source,
+                          GF, INPUT_SOURCE, GObject)
 
-GfInputSource *gf_input_source_new              (GfIBusManager *ibus_manager,
-                                                 const gchar   *type,
-                                                 const gchar   *id,
-                                                 const gchar   *display_name,
-                                                 const gchar   *short_name,
-                                                 guint          index);
+struct _GfInputSourceClass
+{
+  GObjectClass parent_class;
 
-const gchar   *gf_input_source_get_source_type  (GfInputSource *source);
+  const char * (* get_display_name) (GfInputSource  *self);
 
-const gchar   *gf_input_source_get_id           (GfInputSource *source);
+  const char * (* get_short_name)   (GfInputSource  *self);
 
-const gchar   *gf_input_source_get_display_name (GfInputSource *source);
+  gboolean     (* set_short_name)   (GfInputSource  *self,
+                                     const char     *short_name);
 
-const gchar   *gf_input_source_get_short_name   (GfInputSource *source);
+  gboolean     (* get_layout)       (GfInputSource  *self,
+                                     const char    **layout,
+                                     const char    **variant);
 
-void           gf_input_source_set_short_name   (GfInputSource *source,
-                                                 const gchar   *short_name);
+  const char * (* get_xkb_id)       (GfInputSource  *self);
+};
 
-guint          gf_input_source_get_index        (GfInputSource *source);
+const gchar *gf_input_source_get_source_type  (GfInputSource  *source);
 
-const gchar   *gf_input_source_get_xkb_id       (GfInputSource *source);
+const gchar *gf_input_source_get_id           (GfInputSource  *source);
 
-void           gf_input_source_activate         (GfInputSource *source,
-                                                 gboolean       interactive);
+const gchar *gf_input_source_get_display_name (GfInputSource  *source);
 
-IBusPropList  *gf_input_source_get_properties   (GfInputSource *source);
+const gchar *gf_input_source_get_short_name   (GfInputSource  *source);
 
-void           gf_input_source_set_properties   (GfInputSource *source,
-                                                 IBusPropList  *prop_list);
+void         gf_input_source_set_short_name   (GfInputSource  *source,
+                                               const gchar    *short_name);
+
+guint        gf_input_source_get_index        (GfInputSource  *source);
+
+gboolean     gf_input_source_get_layout       (GfInputSource  *source,
+                                               const char    **layout,
+                                               const char    **variant);
+
+const gchar *gf_input_source_get_xkb_id       (GfInputSource  *source);
+
+void         gf_input_source_activate         (GfInputSource  *source,
+                                               gboolean        interactive);
+
+G_END_DECLS
 
 #endif

@@ -1,0 +1,33 @@
+From c1e5c8ec3097fb8676f8d908477ce1313d2d680a Mon Sep 17 00:00:00 2001
+From: donghun <donghun@gooroom.kr>
+Date: Thu, 30 Sep 2021 16:31:42 +0900
+Subject: [PATCH] Fixed CWE-134,362,367
+
+---
+ gnome-flashback/libscreensaver/gf-listener.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/gnome-flashback/libscreensaver/gf-listener.c b/gnome-flashback/libscreensaver/gf-listener.c
+index 39f5dc9..ecb3b5f 100644
+--- a/gnome-flashback/libscreensaver/gf-listener.c
++++ b/gnome-flashback/libscreensaver/gf-listener.c
+@@ -23,6 +23,7 @@
+ #include "config.h"
+ #include "gf-listener.h"
+ 
++#include <glib/gstdio.h>
+ #include <gio/gunixfdlist.h>
+ #include <time.h>
+ 
+@@ -589,7 +590,7 @@ gf_listener_init (GfListener *self)
+   self->inhibit_lock_fd = -1;
+ 
+   /* check if logind is running */
+-  if (access("/run/systemd/seats/", F_OK) >= 0)
++  if (g_access("/run/systemd/seats/", F_OK) >= 0)
+     {
+       self->login_id = g_bus_watch_name (G_BUS_TYPE_SYSTEM,
+                                          LOGIN_DBUS_NAME,
+-- 
+2.30.2
+

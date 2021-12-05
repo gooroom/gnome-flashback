@@ -1,65 +1,212 @@
-gnome-flashback (3.30.0-3+grm2u5) unstable; urgency=medium
+gnome-flashback (3.38.0-2+grm3u1) unstable; urgency=medium
 
   [ donghun ]
-  * [711e55ca] [Bug:2064] Restrict Korean input when entering password
+  * [28e7137f] Rebase for screensaver of Gooroom-3.0
 
-  [ cjheo ]
-  * [36245c11] [Bug:1987] 단일디스플레이 설정에서 지원되지 않는 해상도가 표시되는 버그수정
+  [ heejun.jang ]
+  * [59003899] Create desktop directory when os starts
+  * [8bbe2890] [Bug:3921]Updated desktop item clicked css and item image position
 
-  [ Gooroom Autobuilder ]
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Sun, 05 Dec 2021 12:56:16 +0900
 
- -- Gooroom Autobuilder <jenkins@gooroom.kr>  Thu, 01 Apr 2021 12:49:30 +0900
+gnome-flashback (3.38.0-2) unstable; urgency=medium
 
-gnome-flashback (3.30.0-3+grm2u4) unstable; urgency=medium
+  * Backport upstream patch to fix segfault on login on 32-bit systems.
+    (Closes: #989139)
 
-  [ cjheo ]
-  * [91a965f6] 사용자의 해상도 변경을 시스템에 적용하여 로그인매니저(greeter)에서도 변경된 해상도를 적용받도록 처리
-  * [851450c6] Fixed monitor label display error when setting display of multiple monitors
-  * [02e5cab5] Deleted gooroom-screenshot-in-clipboard.patch
-  * [782c488e] 고해상도 모니터(4k) 에서 백그라운드 그리기 및 모니터 라벨러 오류 수정
-  * [32659d97] [Bug: 2428] Remove secondary text from autorunmanager module's error dialog
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 28 May 2021 21:56:25 +0300
 
-  [ Gooroom Autobuilder ]
+gnome-flashback (3.38.0-1) unstable; urgency=medium
 
- -- Gooroom Autobuilder <jenkins@gooroom.kr>  Tue, 07 Jul 2020 10:10:36 +0900
+  * New upstream release.
+    - Notifications no longer use gvfs-open (closes: #969778).
+  * Update debian/gnome-session-flashback.install for new systemd session
+    configuration.
+  * Make sure *.gmo files are regenerated during build.
+  * Upload to unstable.
 
-gnome-flashback (3.30.0-3+grm2u3) unstable; urgency=medium
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 15 Oct 2020 16:11:47 +0300
 
-  [ cjheo ]
-  * [333bcbc8] [Bug:1835] 모니터 속성이 '알려지지 않음(Unknown)'으로 표시되는 버그 수정
-  * [f3d4393b] polkit 다이얼로그의 윈도가 Taskbar 및 Pager에 표시되지 않도록 수정
+gnome-flashback (3.37.3-1) experimental; urgency=medium
 
-  [ HaeRyong Jeong ]
-  * [60739942] [Bug:1967] Fixed screenshot in clipboard
+  * New upstream release.
 
-  [ Gooroom Autobuilder ]
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 20 Aug 2020 21:04:41 +0300
 
- -- Gooroom Autobuilder <jenkins@gooroom.kr>  Tue, 11 Feb 2020 09:26:31 +0900
+gnome-flashback (3.37.2-3) experimental; urgency=medium
 
-gnome-flashback (3.30.0-3+grm2u2) unstable; urgency=medium
+  * Unregister the old alternative and register the new one on upgrade.
 
-  [ HaeRyong Jeong ]
-  * [abcfc2d8] Changed monitor configuration time
-  * [aeb3de15] Changed monitor configuration restore time
+ -- Dmitry Shachnev <mitya57@debian.org>  Sat, 30 May 2020 13:17:44 +0300
 
-  [ cjheo ]
-  * [d46da179] Fixed a patch conflict
+gnome-flashback (3.37.2-2) experimental; urgency=medium
 
-  [ Gooroom Autobuilder ]
+  * Build against gnome-panel 3.37 and adapt to changed modules path.
+  * Move executables to /usr/libexec, to fix executable-in-usr-lib warning.
+    FHS v3.0 and Debian Policy v4.1.5 allow for this location.
 
- -- Gooroom Autobuilder <jenkins@gooroom.kr>  Mon, 02 Dec 2019 12:45:02 +0900
+ -- Dmitry Shachnev <mitya57@debian.org>  Fri, 29 May 2020 18:48:54 +0300
 
-gnome-flashback (3.30.0-3+grm2u1) unstable; urgency=medium
+gnome-flashback (3.37.2-1) experimental; urgency=medium
 
-  [ cjheo ]
-  * [378fa168] Added build options
-  * [045207c4] Redraw background in idle
-  * [41f4f74e] Add patch to handle self authorization
-  * [409cf326] Update gooroom-self-auth.patch for korean translation
+  * New upstream release.
+  * Depend on nautilus ≥ 3.37.1.1, needed for desktop.
+  * Update to debhelper compat level 13.
 
-  [ Gooroom Autobuilder ]
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 04 May 2020 20:23:03 +0300
 
- -- Gooroom Autobuilder <jenkins@gooroom.kr>  Sun, 01 Dec 2019 15:46:06 +0900
+gnome-flashback (3.36.3-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Remove unused libdbus-glib-1-dev build-dependency. (Closes: #955843)
+  * Install the new gnome-flashback-clipboard executable in gnome-flashback
+    package.
+  * Bump gnome-session-flashback dependency on gnome-flashback to 3.36.3.
+  * Update debian/copyright for clipboard code move.
+  * Add a comment that our --as-needed overrides upstream --no-as-needed
+    (coming from m4/ax_compiler_flags_ldflags.m4), to fix Lintian warning.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 30 Apr 2020 12:29:58 +0300
+
+gnome-flashback (3.36.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Drop all patches, included in the new release.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 30 Mar 2020 13:47:33 +0300
+
+gnome-flashback (3.36.0-3) unstable; urgency=medium
+
+  * Remove gnome-screensaver autostart file on upgrade. (Closes: #954717)
+  * Backport upstream patch to disable unimplemented placement modes.
+  * Backport upstream patch to fix locking screen from end session dialog.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 23 Mar 2020 13:11:39 +0300
+
+gnome-flashback (3.36.0-2) unstable; urgency=medium
+
+  * Recommend libpam-gnome-keyring, used by the PAM configuration file.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 17 Mar 2020 12:22:06 +0300
+
+gnome-flashback (3.36.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Drop all patches, included in the new release.
+  * Update debian/copyright.
+  * Drop system_indicators.a from debian/not-installed.
+  * Add debian/gnome-flashback.pam file, copied from gnome-screensaver.
+  * Upload to unstable.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Mon, 16 Mar 2020 22:19:48 +0300
+
+gnome-flashback (3.35.2-2) experimental; urgency=medium
+
+  * Build-depend on libasound2-dev to enable ALSA support.
+  * Add missing Breaks/Replaces for moving the GSettings override to
+    gnome-session-flashback. (Closes: #952688)
+  * Backport upstream patch to fix crash in GfInputSourcesButton.
+    (LP: #1864506)
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 27 Feb 2020 18:38:34 +0300
+
+gnome-flashback (3.35.2-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update debian/clean file.
+  * Add new build-dependencies.
+  * Drop gnome-screensaver recommendation.
+  * Make system-indicators link with math library to fix linker errors.
+  * Install the System Indicators panel module in gnome-flashback package.
+  * Install gnome-flashback.layout and the GSettings override file in
+    gnome-session-flashback package.
+  * Update to debhelper compat level 12, use the new syntax.
+  * Update debian/copyright.
+  * Bump Standards-Version to 4.5.0, no changes needed.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 11 Feb 2020 23:32:51 +0300
+
+gnome-flashback (3.35.1-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop disable_compiz_session.diff, no longer needed.
+  * Build-depend on libsystemd-dev, needed by the new libdesktop component.
+  * Stop suggesting compiz, Debian is not shipping a compatible version.
+  * Drop obsolete Breaks/Replaces on pre-Stretch package versions.
+  * Update the package description to mention desktop icons.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 03 Dec 2019 19:00:25 +0300
+
+gnome-flashback (3.34.2-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Update debian/copyright.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sat, 02 Nov 2019 01:12:07 +0300
+
+gnome-flashback (3.34.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 15 Oct 2019 13:51:33 +0300
+
+gnome-flashback (3.34.0-2) unstable; urgency=medium
+
+  * Bump gnome-session-bin dependency to 3.33.92.
+  * Bump Standards-Version to 4.4.1, no changes needed.
+  * Upload to unstable.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 01 Oct 2019 11:58:14 +0300
+
+gnome-flashback (3.34.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update debian/watch to track only stable versions again.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Tue, 10 Sep 2019 16:47:35 +0300
+
+gnome-flashback (3.33.92-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop systemd_unit_dir.diff, applied upstream.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Thu, 05 Sep 2019 14:56:32 +0300
+
+gnome-flashback (3.33.1-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update debian/watch to track unstable versions.
+  * Drop fix_ibus_flicker.diff and fix_shell_memory_leak.diff,
+    included in the new release.
+  * Backport upstream commit to fix systemd unit files install directory.
+  * Install the systemd unit files.
+  * Bump gnome-session-flashback dependencies on gnome-flashback and
+    gnome-session-bin, to ensure presence of systemd user session support.
+  * Bump dependency on gnome-settings-daemon, to make sure it supports the
+    new org.gnome.Shell D-Bus interface.
+  * Bump gsettings-desktop-schemas-dev build-dependency to 3.31.0.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sun, 18 Aug 2019 14:53:43 +0300
+
+gnome-flashback (3.32.0-2) experimental; urgency=medium
+
+  * Backport upstream patch to fix ibus indicator flicker. (LP: #1836659)
+  * Backport upstream patch to fix memory leak when destroying shell object.
+    (LP: #1760336)
+  * Add files generated by gdbus-codegen to debian/clean.
+  * Bump Standards-Version to 4.4.0, no changes needed.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sat, 20 Jul 2019 21:21:11 +0300
+
+gnome-flashback (3.32.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop patches that are included in the new release:
+    - fix-handle-ungrab-crash.diff
+    - fix-notifications-crash.diff
+  * Update debian/copyright.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sun, 05 May 2019 13:15:34 +0300
 
 gnome-flashback (3.30.0-3) unstable; urgency=medium
 

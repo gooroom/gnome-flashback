@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013 Red Hat Inc.
- * Copyright (C) 2017 Alberts Muktupāvels
+ * Copyright (C) 2017-2019 Alberts Muktupāvels
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,11 +31,26 @@ struct _GfMonitorManagerKms
   GfMonitorManager parent;
 };
 
-G_DEFINE_TYPE (GfMonitorManagerKms, gf_monitor_manager_kms, GF_TYPE_MONITOR_MANAGER)
+static void
+initable_iface_init (GInitableIface *initable_iface);
+
+G_DEFINE_TYPE_WITH_CODE (GfMonitorManagerKms, gf_monitor_manager_kms,
+                         GF_TYPE_MONITOR_MANAGER,
+                         G_IMPLEMENT_INTERFACE (G_TYPE_INITABLE,
+                                                initable_iface_init))
+
+static gboolean
+gf_monitor_manager_kms_initable_init (GInitable     *initable,
+                                      GCancellable  *cancellable,
+                                      GError       **error)
+{
+  return TRUE;
+}
 
 static void
-gf_monitor_manager_kms_read_current (GfMonitorManager *manager)
+initable_iface_init (GInitableIface *initable_iface)
 {
+  initable_iface->init = gf_monitor_manager_kms_initable_init;
 }
 
 static GBytes *
@@ -140,7 +155,6 @@ gf_monitor_manager_kms_class_init (GfMonitorManagerKmsClass *kms_class)
 
   manager_class = GF_MONITOR_MANAGER_CLASS (kms_class);
 
-  manager_class->read_current = gf_monitor_manager_kms_read_current;
   manager_class->read_edid = gf_monitor_manager_kms_read_edid;
   manager_class->ensure_initial_config = gf_monitor_manager_kms_ensure_initial_config;
   manager_class->apply_monitors_config = gf_monitor_manager_kms_apply_monitors_config;

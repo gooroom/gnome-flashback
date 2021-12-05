@@ -1,0 +1,54 @@
+From: Thomas Schwinge <thomas@schwinge.name>
+Date: Thu, 25 Feb 2021 01:01:41 +0100
+Subject: Correctly pass uint64_t through varargs interface
+
+The "id" properties for the GfCrtc, GfGpu and GfOutput objects are 64-bit
+values, so take care to pass 64-bit values when calling g_object_new.
+
+https://gitlab.gnome.org/GNOME/gnome-flashback/-/issues/72
+(cherry picked from commit 7676c3a243aad62150b1108dd126132b5f91f8d7)
+---
+ backends/gf-crtc-xrandr.c   | 2 +-
+ backends/gf-gpu-xrandr.c    | 2 +-
+ backends/gf-output-xrandr.c | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/backends/gf-crtc-xrandr.c b/backends/gf-crtc-xrandr.c
+index ffd9c8e..d57d4d4 100644
+--- a/backends/gf-crtc-xrandr.c
++++ b/backends/gf-crtc-xrandr.c
+@@ -145,7 +145,7 @@ gf_crtc_xrandr_new (GfGpuXrandr        *gpu_xrandr,
+   all_transforms = gf_monitor_transform_from_xrandr_all (xrandr_crtc->rotations);
+ 
+   crtc_xrandr = g_object_new (GF_TYPE_CRTC_XRANDR,
+-                              "id", crtc_id,
++                              "id", (uint64_t) crtc_id,
+                               "gpu", gpu,
+                               "all-transforms", all_transforms,
+                               NULL);
+diff --git a/backends/gf-gpu-xrandr.c b/backends/gf-gpu-xrandr.c
+index de9cdee..6b5e591 100644
+--- a/backends/gf-gpu-xrandr.c
++++ b/backends/gf-gpu-xrandr.c
+@@ -157,7 +157,7 @@ gf_gpu_xrandr_read_current (GfGpu   *gpu,
+       crtc_mode_info->flags = xmode->modeFlags;
+ 
+       mode = g_object_new (GF_TYPE_CRTC_MODE,
+-                           "id", xmode->id,
++                           "id", (uint64_t) xmode->id,
+                            "name", crtc_mode_name,
+                            "info", crtc_mode_info,
+                            NULL);
+diff --git a/backends/gf-output-xrandr.c b/backends/gf-output-xrandr.c
+index d4a7094..707aadf 100644
+--- a/backends/gf-output-xrandr.c
++++ b/backends/gf-output-xrandr.c
+@@ -875,7 +875,7 @@ gf_output_xrandr_new (GfGpuXrandr   *gpu_xrandr,
+   output_info_init_backlight_limits_xrandr (output_info, xdisplay, output_id);
+ 
+   output = g_object_new (GF_TYPE_OUTPUT_XRANDR,
+-                         "id", output_id,
++                         "id", (uint64_t) output_id,
+                          "gpu", gpu_xrandr,
+                          "info", output_info,
+                          NULL);

@@ -224,6 +224,14 @@
     <property name="PowerSaveMode" type="i" access="readwrite" />
 
     <!--
+        PanelOrientationManaged:
+
+        Whether the built-in panel orientation is automatically managed
+        by mutter.
+    -->
+    <property name="PanelOrientationManaged" type="b" access="read" />
+
+    <!--
         MonitorsChanged:
 
         The signal is emitted every time the screen configuration
@@ -316,8 +324,6 @@
 
         Possible @properties are:
 
-        * "supports-mirroring" (b): FALSE if mirroring not supported; TRUE or not
-                                    present if mirroring is supported.
         * "layout-mode" (u): Represents in what way logical monitors are laid
                              out on the screen. The layout mode can be either
                              of the ones listed below. Absence of this property
@@ -335,6 +341,10 @@
                                        always use the same scale. Absence of
                                        this means logical monitor scales can
                                        differ.
+        * "legacy-ui-scaling-factor" (i): The legacy scaling factor traditionally
+                                          used to scale X11 clients (commonly
+                                          communicated via the
+                                          Gdk/WindowScalingFactor XSetting entry).
     -->
     <method name="GetCurrentState">
       <arg name="serial" direction="out" type="u" />

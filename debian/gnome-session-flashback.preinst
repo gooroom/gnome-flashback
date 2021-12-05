@@ -5,6 +5,8 @@ set -e
 if [ "$1" = upgrade ]; then
   update-alternatives --remove \
     x-session-manager /usr/lib/gnome-panel/gnome-session-flashback
+  update-alternatives --remove \
+    x-session-manager /usr/lib/gnome-flashback/gnome-flashback-metacity
 fi
 
 #DEBHELPER#

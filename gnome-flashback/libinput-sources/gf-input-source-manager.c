@@ -17,6 +17,7 @@
  */
 
 #include "config.h"
+#include "gf-input-source-manager.h"
 
 #include <gdk/gdk.h>
 #include <gdk/gdkx.h>
@@ -26,10 +27,10 @@
 #include <X11/Xatom.h>
 
 #include "gf-ibus-manager.h"
-#include "gf-input-source.h"
-#include "gf-input-source-manager.h"
+#include "gf-input-source-ibus.h"
 #include "gf-input-source-popup.h"
 #include "gf-input-source-settings.h"
+#include "gf-input-source-xkb.h"
 #include "gf-keyboard-manager.h"
 
 #define DESKTOP_WM_KEYBINDINGS_SCHEMA "org.gnome.desktop.wm.keybindings"
@@ -43,9 +44,6 @@ struct _SourceInfo
   gchar *type;
 
   gchar *id;
-
-  gchar *display_name;
-  gchar *short_name;
 };
 
 typedef struct
@@ -70,6 +68,7 @@ struct _GfInputSourceManager
   GfIBusManager         *ibus_manager;
   gboolean               ibus_ready;
   gboolean               disable_ibus;
+  gboolean               reloading;
 
   GHashTable            *input_sources;
   GHashTable            *ibus_sources;
@@ -155,6 +154,7 @@ get_active_window (void)
 
   gdk_x11_display_error_trap_push (display);
 
+  prop = NULL;
   status = XGetWindowProperty (xdisplay,
                                DefaultRootWindow (xdisplay),
                                _net_active_window,
@@ -168,21 +168,12 @@ get_active_window (void)
                                &bytes_after,
                                &prop);
 
+  gdk_x11_display_error_trap_pop_ignored (display);
+
   if (status != Success ||
       actual_type != XA_WINDOW)
     {
-      if (prop)
-        XFree (prop);
-
-      gdk_x11_display_error_trap_pop_ignored (display);
-
-      return None;
-    }
-
-  if (gdk_x11_display_error_trap_pop (display) != Success)
-    {
-      if (prop)
-        XFree (prop);
+      XFree (prop);
 
       return None;
     }
@@ -394,9 +385,7 @@ get_symbol_from_char_code (gunichar code)
 
 static SourceInfo *
 source_info_new (const gchar *type,
-                 const gchar *id,
-                 const gchar *display_name,
-                 const gchar *short_name)
+                 const gchar *id)
 {
   SourceInfo *info;
 
@@ -404,8 +393,6 @@ source_info_new (const gchar *type,
 
   info->type = g_strdup (type);
   info->id = g_strdup (id);
-  info->display_name = g_strdup (display_name);
-  info->short_name = g_strdup (short_name);
 
   return info;
 }
@@ -419,8 +406,6 @@ source_info_free (gpointer data)
 
   g_free (info->type);
   g_free (info->id);
-  g_free (info->display_name);
-  g_free (info->short_name);
 
   g_free (info);
 }
@@ -510,14 +495,12 @@ fade_finished_cb (GfInputSourcePopup *popup,
 }
 
 static gboolean
-modifiers_accelerator_activated_cb (GfKeybindings *keybindings,
-                                    gpointer       user_data)
+modifiers_accelerator_activated_cb (GfKeybindings    *keybindings,
+                                    GfKeybindingType  keybinding_type,
+                                    gpointer          user_data)
 {
   GfInputSourceManager *manager;
   guint size;
-  GfInputSource *source;
-  GList *keys;
-  guint next_index;
 
   manager = GF_INPUT_SOURCE_MANAGER (user_data);
 
@@ -528,23 +511,33 @@ modifiers_accelerator_activated_cb (GfKeybindings *keybindings,
       return TRUE;
     }
 
-  source = manager->current_source;
-  if (source == NULL)
-    source = (GfInputSource *) g_hash_table_lookup (manager->input_sources,
-                                                    GUINT_TO_POINTER (0));
+  if (keybinding_type == GF_KEYBINDING_ISO_NEXT_GROUP)
+    {
+      gf_input_source_manager_activate_next_source (manager);
+    }
+  else if (keybinding_type == GF_KEYBINDING_ISO_FIRST_GROUP)
+    {
+      GfInputSource *first_source;
 
-  keys = g_hash_table_get_keys (manager->input_sources);
-  keys = g_list_sort (keys, compare_indexes);
+      first_source = g_hash_table_lookup (manager->input_sources,
+                                          GUINT_TO_POINTER (0));
 
-  next_index = gf_input_source_get_index (source ) + 1;
-  if (next_index > GPOINTER_TO_UINT (g_list_nth_data (keys, size - 1)))
-    next_index = 0;
+      gf_input_source_activate (first_source, TRUE);
+    }
+  else if (keybinding_type == GF_KEYBINDING_ISO_LAST_GROUP)
+    {
+      GList *keys;
+      GfInputSource *last_source;
 
-  source = (GfInputSource *) g_hash_table_lookup (manager->input_sources,
-                                                  GUINT_TO_POINTER (next_index));
+      keys = g_hash_table_get_keys (manager->input_sources);
+      keys = g_list_sort (keys, compare_indexes);
 
-  gf_input_source_activate (source, TRUE);
-  g_list_free (keys);
+      last_source = g_hash_table_lookup (manager->input_sources,
+                                         g_list_nth_data (keys, size - 1));
+
+      gf_input_source_activate (last_source, TRUE);
+      g_list_free (keys);
+    }
 
   return TRUE;
 }
@@ -552,6 +545,9 @@ modifiers_accelerator_activated_cb (GfKeybindings *keybindings,
 static void
 accelerator_activated_cb (GfKeybindings *keybindings,
                           guint          action,
+                          const gchar   *device_node,
+                          guint          device_id,
+                          guint          timestamp,
                           gpointer       user_data)
 {
   GfInputSourceManager *manager;
@@ -584,11 +580,34 @@ accelerator_activated_cb (GfKeybindings *keybindings,
   gtk_widget_show (manager->popup);
 }
 
+static char *
+get_iso_group_from_xkb_options (gchar **xkb_options)
+{
+  gchar **p;
+  char *option;
+
+  option = NULL;
+
+  for (p = xkb_options; p && *p; ++p)
+    {
+      if (!g_str_has_prefix (*p, "grp:"))
+        continue;
+
+      option = g_strdup (*p + 4);
+      break;
+    }
+
+  return option;
+}
+
 static void
 keybindings_init (GfInputSourceManager *manager)
 {
+  gchar **options;
+  char *iso_group;
+
   manager->wm_keybindings = g_settings_new (DESKTOP_WM_KEYBINDINGS_SCHEMA);
-  manager->keybindings = gf_keybindings_new (TRUE);
+  manager->keybindings = gf_keybindings_new ();
 
   g_signal_connect (manager->wm_keybindings,
                     "changed::" KEY_SWITCH_INPUT_SOURCE,
@@ -600,6 +619,13 @@ keybindings_init (GfInputSourceManager *manager)
                     G_CALLBACK (switch_input_backward_changed_cb),
                     manager);
 
+  options = gf_input_source_settings_get_xkb_options (manager->settings);
+  iso_group = get_iso_group_from_xkb_options (options);
+  g_strfreev (options);
+
+  gf_keybindings_grab_iso_group (manager->keybindings, iso_group);
+  g_free (iso_group);
+
   g_signal_connect (manager->keybindings, "accelerator-activated",
                     G_CALLBACK (accelerator_activated_cb), manager);
   g_signal_connect (manager->keybindings, "modifiers-accelerator-activated",
@@ -607,41 +633,6 @@ keybindings_init (GfInputSourceManager *manager)
 
   switch_input_changed_cb (manager->wm_keybindings, NULL, manager);
   switch_input_backward_changed_cb (manager->wm_keybindings, NULL, manager);
-}
-
-static gchar *
-make_engine_short_name (IBusEngineDesc *engine_desc)
-{
-  const gchar *symbol;
-  const gchar *language;
-
-  symbol = ibus_engine_desc_get_symbol (engine_desc);
-
-  if (symbol != NULL && symbol[0] != '\0')
-    return g_strdup (symbol);
-
-  language = ibus_engine_desc_get_language (engine_desc);
-
-  if (language != NULL && language[0] != '\0')
-    {
-      gchar **codes;
-
-      codes = g_strsplit (language, "_", 2);
-
-      if (strlen (codes[0]) == 2 || strlen (codes[0]) == 3)
-        {
-          gchar *short_name;
-
-          short_name = g_ascii_strdown (codes[0], -1);
-          g_strfreev (codes);
-
-          return short_name;
-        }
-
-      g_strfreev (codes);
-    }
-
-  return get_symbol_from_char_code (0x2328);
 }
 
 static GList *
@@ -671,24 +662,16 @@ get_source_info_list (GfInputSourceManager *manager)
       if (g_strcmp0 (type, INPUT_SOURCE_TYPE_XKB) == 0)
         {
           gboolean exists;
-          const gchar *display_name;
-          const gchar *short_name;
 
-          exists = gnome_xkb_info_get_layout_info (xkb_info, id, &display_name,
-                                                   &short_name, NULL, NULL);
+          exists = gnome_xkb_info_get_layout_info (xkb_info, id, NULL,
+                                                   NULL, NULL, NULL);
 
           if (exists)
-            info = source_info_new (type, id, display_name, short_name);
+            info = source_info_new (type, id);
         }
       else if (g_strcmp0 (type, INPUT_SOURCE_TYPE_IBUS) == 0)
         {
           IBusEngineDesc *engine_desc;
-          const gchar *language_code;
-          const gchar *language;
-          const gchar *longname;
-          const gchar *textdomain;
-          gchar *display_name;
-          gchar *short_name;
 
           if (manager->disable_ibus)
             continue;
@@ -699,21 +682,7 @@ get_source_info_list (GfInputSourceManager *manager)
           if (engine_desc == NULL)
             continue;
 
-          language_code = ibus_engine_desc_get_language (engine_desc);
-          language = ibus_get_language_name (language_code);
-          longname = ibus_engine_desc_get_longname (engine_desc);
-          textdomain = ibus_engine_desc_get_textdomain (engine_desc);
-
-          if (*textdomain != '\0' && *longname != '\0')
-            longname = g_dgettext (textdomain, longname);
-
-          display_name = g_strdup_printf ("%s (%s)", language, longname);
-          short_name = make_engine_short_name (engine_desc);
-
-          info = source_info_new (type, id, display_name, short_name);
-
-          g_free (display_name);
-          g_free (short_name);
+          info = source_info_new (type, id);
         }
 
       if (info != NULL)
@@ -726,21 +695,14 @@ get_source_info_list (GfInputSourceManager *manager)
     {
       const gchar *type;
       const gchar *id;
-      const gchar *display_name;
-      const gchar *short_name;
       SourceInfo *info;
 
       type = INPUT_SOURCE_TYPE_XKB;
       id = gf_keyboard_manager_get_default_layout (manager->keyboard_manager);
 
-      gnome_xkb_info_get_layout_info (xkb_info, id, &display_name,
-                                      &short_name, NULL, NULL);
-
-      info = source_info_new (type, id, display_name, short_name);
+      info = source_info_new (type, id);
       list = g_list_append (list, info);
     }
-
-  g_object_unref (xkb_info);
 
   return list;
 }
@@ -783,6 +745,9 @@ engine_set_cb (GfIBusManager *manager,
   GfInputSourceManager *source_manager;
 
   source_manager = GF_INPUT_SOURCE_MANAGER (user_data);
+
+  if (source_manager->reloading)
+    return;
 
   gf_keyboard_manager_ungrab (source_manager->keyboard_manager,
                               GDK_CURRENT_TIME);
@@ -835,7 +800,18 @@ activate_cb (GfInputSource        *source,
 
   xkb_id = gf_input_source_get_xkb_id (source);
 
-  gf_keyboard_manager_grab (manager->keyboard_manager, GDK_CURRENT_TIME);
+  /*
+   * The focus changes during grab/ungrab may trick the client into hiding
+   * UI containing the currently focused entry. So grab/ungrab are not called
+   * when 'set-content-type' signal is received. E.g. Focusing on a password
+   * entry in a popup in Xorg Firefox will emit 'set-content-type' signal.
+   *
+   * https://gitlab.gnome.org/GNOME/gnome-shell/issues/391
+   * https://gitlab.gnome.org/GNOME/gnome-flashback/issues/15
+   */
+  if (!manager->reloading)
+    gf_keyboard_manager_grab (manager->keyboard_manager, GDK_CURRENT_TIME);
+
   gf_keyboard_manager_apply (manager->keyboard_manager, xkb_id);
 
   if (manager->ibus_manager == NULL)
@@ -1116,9 +1092,20 @@ sources_changed_cb (GfInputSourceSettings *settings,
       info = (SourceInfo *) l->data;
       position = g_list_position (source_infos, l);
 
-      source = gf_input_source_new (manager->ibus_manager, info->type,
-                                    info->id, info->display_name,
-                                    info->short_name, position);
+      if (g_strcmp0 (info->type, INPUT_SOURCE_TYPE_IBUS) == 0)
+        {
+          source = gf_input_source_ibus_new (manager->ibus_manager,
+                                             info->id,
+                                             position);
+        }
+      else
+        {
+          GnomeXkbInfo *xkb_info;
+
+          xkb_info = gf_keyboard_manager_get_xkb_info (manager->keyboard_manager);
+
+          source = gf_input_source_xkb_new (xkb_info, info->id, position);
+        }
 
       g_signal_connect (source, "activate",
                         G_CALLBACK (activate_cb), manager);
@@ -1166,10 +1153,15 @@ xkb_options_changed_cb (GfInputSourceSettings *settings,
 {
   GfInputSourceManager *manager;
   gchar **options;
+  char *iso_group;
 
   manager = GF_INPUT_SOURCE_MANAGER (user_data);
 
   options = gf_input_source_settings_get_xkb_options (manager->settings);
+
+  iso_group = get_iso_group_from_xkb_options (options);
+  gf_keybindings_grab_iso_group (manager->keybindings, iso_group);
+  g_free (iso_group);
 
   gf_keyboard_manager_set_xkb_options (manager->keyboard_manager, options);
   g_strfreev (options);
@@ -1259,10 +1251,11 @@ properties_registered_cb (GfIBusManager *ibus_manager,
   source = (GfInputSource *) g_hash_table_lookup (manager->ibus_sources,
                                                   engine_name);
 
-  if (!source)
+  if (!source || !GF_IS_INPUT_SOURCE_IBUS (source))
     return;
 
-  gf_input_source_set_properties (source, prop_list);
+  gf_input_source_ibus_set_properties (GF_INPUT_SOURCE_IBUS (source),
+                                       prop_list);
 
   if (compare_sources (source, manager->current_source))
     g_signal_emit (manager, signals[SIGNAL_CURRENT_SOURCE_CHANGED], 0, NULL);
@@ -1325,10 +1318,10 @@ property_updated_cb (GfIBusManager *ibus_manager,
   source = (GfInputSource *) g_hash_table_lookup (manager->ibus_sources,
                                                   engine_name);
 
-  if (!source)
+  if (!source || !GF_IS_INPUT_SOURCE_IBUS (source))
     return;
 
-  prop_list = gf_input_source_get_properties (source);
+  prop_list = gf_input_source_ibus_get_properties (GF_INPUT_SOURCE_IBUS (source));
 
   if (!update_sub_property (prop_list, property))
     return;
@@ -1544,8 +1537,8 @@ gf_input_source_manager_init (GfInputSourceManager *manager)
 {
   manager->keyboard_manager = gf_keyboard_manager_new ();
 
-  keybindings_init (manager);
   input_source_settings_init (manager);
+  keybindings_init (manager);
 }
 
 GfInputSourceManager *
@@ -1561,12 +1554,16 @@ gf_input_source_manager_reload (GfInputSourceManager *manager)
 {
   gchar **options;
 
+  manager->reloading = TRUE;
+
   options = gf_input_source_settings_get_xkb_options (manager->settings);
 
   gf_keyboard_manager_set_xkb_options (manager->keyboard_manager, options);
   g_strfreev (options);
 
   sources_changed_cb (manager->settings, manager);
+
+  manager->reloading = FALSE;
 }
 
 GfInputSource *
@@ -1584,4 +1581,37 @@ gf_input_source_manager_get_input_sources (GfInputSourceManager *manager)
   sources = g_list_sort (sources, compare_sources_by_index);
 
   return sources;
+}
+
+void
+gf_input_source_manager_activate_next_source (GfInputSourceManager *manager)
+{
+  guint size;
+  GList *keys;
+  GfInputSource *current_source;
+  guint next_index;
+  GfInputSource *next_source;
+
+  size = g_hash_table_size (manager->input_sources);
+  if (size == 0)
+    return;
+
+  keys = g_hash_table_get_keys (manager->input_sources);
+  keys = g_list_sort (keys, compare_indexes);
+
+  current_source = manager->current_source;
+
+  if (current_source == NULL)
+    current_source = g_hash_table_lookup (manager->input_sources,
+                                          GUINT_TO_POINTER (0));
+
+  next_index = gf_input_source_get_index (current_source) + 1;
+  if (next_index > GPOINTER_TO_UINT (g_list_nth_data (keys, size - 1)))
+    next_index = 0;
+
+  next_source = g_hash_table_lookup (manager->input_sources,
+                                     GUINT_TO_POINTER (next_index));
+
+  gf_input_source_activate (next_source, TRUE);
+  g_list_free (keys);
 }
