@@ -1,3 +1,14 @@
+gnome-flashback (3.38.0-2+grm3u1) unstable; urgency=medium
+
+  [ donghun ]
+  * [28e7137f] Rebase for screensaver of Gooroom-3.0
+
+  [ heejun.jang ]
+  * [59003899] Create desktop directory when os starts
+  * [8bbe2890] [Bug:3921]Updated desktop item clicked css and item image position
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Sun, 05 Dec 2021 12:56:16 +0900
+
 gnome-flashback (3.38.0-2) unstable; urgency=medium
 
   * Backport upstream patch to fix segfault on login on 32-bit systems.
