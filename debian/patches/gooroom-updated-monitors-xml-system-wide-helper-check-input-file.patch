@@ -1,0 +1,23 @@
+diff --git a/backends/monitors-xml-system-wide-helper.c b/backends/monitors-xml-system-wide-helper.c
+index c5e8a79..13469e0 100644
+--- a/backends/monitors-xml-system-wide-helper.c
++++ b/backends/monitors-xml-system-wide-helper.c
+@@ -38,6 +38,7 @@ copy_monitors_config (const char *user)
+ {
+ 	const char *target;
+ 	gchar *source, *contents;
++        char *realfile;
+ 
+ 	source = g_strdup_printf ("/home/%s/.config/monitors.xml", user);
+ 	target = "/etc/monitors.xml";
+@@ -45,6 +46,10 @@ copy_monitors_config (const char *user)
+ 	if (!g_file_test (source, G_FILE_TEST_EXISTS))
+ 		goto out;
+ 
++        realfile = realpath (source, NULL);
++        if (g_strcmp0 (realfile, source) != 0)
++                goto out;
++
+ 	contents = NULL;
+ 	g_file_get_contents (source, &contents, NULL, NULL);
+ 	if (contents) {
