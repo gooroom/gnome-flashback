@@ -7,3 +7,4 @@ gooroom-05-Updated-desktop-item-clicked-css-and-Updated-item-image-position.patc
 gooroom-06-self-auth.patch
 gooroom-07-replaced-XRRGetScreenResourcesCurrent-with-XRRGetScreenResources-for-monitor-property-retrieval.patch
 gooroom-08-not-display-polkit-window-in-taskbar-and-pager.patch
+gooroom-09-apply-monitor-config-to-system-wide.patch
