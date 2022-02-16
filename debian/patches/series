@@ -10,3 +10,4 @@ gooroom-08-not-display-polkit-window-in-taskbar-and-pager.patch
 gooroom-09-apply-monitor-config-to-system-wide.patch
 gooroom-10-fix-monitor-labeler-error.patch
 gooroom-11-hidpi-monitor-label-error.patch
+gooroom-12-remove-secondary-message-from-autorunmanager-error-dialog.patch
