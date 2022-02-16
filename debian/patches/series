@@ -5,3 +5,4 @@ gooroom-03-gooroom-ui.patch
 gooroom-04-Create-desktop-directory-when-os-starts.patch
 gooroom-05-Updated-desktop-item-clicked-css-and-Updated-item-image-position.patch
 gooroom-06-self-auth.patch
+gooroom-07-replaced-XRRGetScreenResourcesCurrent-with-XRRGetScreenResources-for-monitor-property-retrieval.patch

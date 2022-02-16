@@ -1,0 +1,13 @@
+diff --git a/backends/gf-gpu-xrandr.c b/backends/gf-gpu-xrandr.c
+index 6b5e591..165732b 100644
+--- a/backends/gf-gpu-xrandr.c
++++ b/backends/gf-gpu-xrandr.c
+@@ -123,7 +123,7 @@ gf_gpu_xrandr_read_current (GfGpu   *gpu,
+   monitor_manager->screen_width = WidthOfScreen (screen);
+   monitor_manager->screen_height = HeightOfScreen (screen);
+ 
+-  resources = XRRGetScreenResourcesCurrent (xdisplay, DefaultRootWindow (xdisplay));
++  resources = XRRGetScreenResources (xdisplay, DefaultRootWindow (xdisplay));
+ 
+   if (!resources)
+     {
