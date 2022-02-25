@@ -1,20 +1,13 @@
-diff --git a/data/theme/Flat-Remix-GTK-Blue-Darker/gnome-flashback.css b/data/theme/Flat-Remix-GTK-Blue-Darker/gnome-flashback.css
-index 315d664..39af5bd 100644
---- a/data/theme/Flat-Remix-GTK-Blue-Darker/gnome-flashback.css
-+++ b/data/theme/Flat-Remix-GTK-Blue-Darker/gnome-flashback.css
-@@ -106,3 +106,12 @@ gf-screensaver-panel-bottom button:disabled {
- #auth_unlock_button:disabled {
-   background-color: @insensitive_fg_color;
- }
-+
-+gf-icon:selected label {
-+  background-color: @theme_selected_bg_color;
-+  color: #ffffff;
-+}
-+
-+gf-icon:selected image{
-+  -gtk-icon-effect: dim;
-+}
+From 1cf09e88f46042b9900ddb900c7083d990f9f34c Mon Sep 17 00:00:00 2001
+From: donghun <donghun@gooroom.kr>
+Date: Thu, 24 Feb 2022 19:31:51 +0900
+Subject: [PATCH] Updated desktop item clicked css and Updated item image
+ position
+
+---
+ gnome-flashback/libdesktop/gf-icon.c | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
 diff --git a/gnome-flashback/libdesktop/gf-icon.c b/gnome-flashback/libdesktop/gf-icon.c
 index 1a08d9b..e092a39 100644
 --- a/gnome-flashback/libdesktop/gf-icon.c
@@ -64,3 +57,6 @@ index 1a08d9b..e092a39 100644
  
  #ifdef HAVE_PANGO144
    attrs = pango_attr_list_new ();
+-- 
+2.30.2
+
