@@ -1,3 +1,10 @@
+gnome-flashback (3.30.0-3+grm2u6) unstable; urgency=medium
+
+  [ heejun.jang ]
+  * [5241c015] Updated monitors-xml-system-wide-helper check input file
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Thu, 19 May 2022 10:38:06 +0900
+
 gnome-flashback (3.30.0-3+grm2u5) unstable; urgency=medium
 
   [ donghun ]
