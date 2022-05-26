@@ -1,3 +1,10 @@
+gnome-flashback (3.38.0-2+grm3u3) unstable; urgency=medium
+
+  [ heejun.jang ]
+  * [d41e4e23] [Bug:4600]Update Desktop new folder message
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Thu, 26 May 2022 18:21:26 +0900
+
 gnome-flashback (3.38.0-2+grm3u2) unstable; urgency=medium
 
   [ heejun.jang ]
