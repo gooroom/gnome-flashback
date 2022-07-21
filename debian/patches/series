@@ -15,3 +15,4 @@ gooroom-13-restrict-Korean-input-when-entering-password.patch
 gooroom-14-initialize-variable-called-current_mode.patch
 gooroom-15-updated-monitors-xml-system-wide-helper-check-input-file.patch
 gooroom-16-update-desktop-new-folder-message.patch
+gooroom-17-update-desktop-new-folder-length-limit.patch
