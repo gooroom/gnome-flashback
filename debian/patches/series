@@ -16,3 +16,4 @@ gooroom-14-initialize-variable-called-current_mode.patch
 gooroom-15-updated-monitors-xml-system-wide-helper-check-input-file.patch
 gooroom-16-update-desktop-new-folder-message.patch
 gooroom-17-update-desktop-new-folder-length-limit.patch
+gooroom-18-remove-new-folder-dialog-taskbar-icon.patch
