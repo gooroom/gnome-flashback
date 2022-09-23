@@ -1,3 +1,10 @@
+gnome-flashback (3.38.0-2+grm3u5) unstable; urgency=medium
+
+  [ heejun.jang ]
+  * [8c8276e5] Remove open Terminal menu when terminal desktop app not exists
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Fri, 23 Sep 2022 11:54:17 +0900
+
 gnome-flashback (3.38.0-2+grm3u4) unstable; urgency=medium
 
   [ heejun.jang ]
