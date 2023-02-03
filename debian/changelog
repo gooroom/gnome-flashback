@@ -1,3 +1,10 @@
+gnome-flashback (3.38.0-2+grm3u6) unstable; urgency=medium
+
+  [ boyeon.choi ]
+  * [78fe5375] Changed the event from move to copy when creating the program shortcut icon
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Fri, 03 Feb 2023 16:11:08 +0900
+
 gnome-flashback (3.38.0-2+grm3u5) unstable; urgency=medium
 
   [ heejun.jang ]
