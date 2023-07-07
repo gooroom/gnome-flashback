@@ -1,0 +1,21 @@
+diff --git a/gnome-flashback/libdesktop/gf-icon-view.c b/gnome-flashback/libdesktop/gf-icon-view.c
+index b7e46e7..1f987e8 100644
+--- a/gnome-flashback/libdesktop/gf-icon-view.c
++++ b/gnome-flashback/libdesktop/gf-icon-view.c
+@@ -20,6 +20,7 @@
+ 
+ #include <gdk/gdkx.h>
+ #include <glib/gi18n.h>
++#include <glib/gstdio.h>
+ 
+ #include "dbus/gf-file-manager-gen.h"
+ #include "dbus/gf-nautilus2-gen.h"
+@@ -1366,7 +1367,7 @@ create_popup_menu (GfIconView *self)
+ 
+   app_info = g_desktop_app_info_new ("org.gnome.Terminal.desktop");
+ 
+-  if (app_info != NULL) {
++  if (app_info != NULL && g_access ("/usr/bin/gnome-terminal", X_OK) >= 0) {
+     item = gtk_separator_menu_item_new ();
+     gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+     gtk_widget_show (item);

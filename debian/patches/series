@@ -19,3 +19,4 @@ gooroom-17-update-desktop-new-folder-length-limit.patch
 gooroom-18-remove-new-folder-dialog-taskbar-icon.patch
 gooroom-19-remove-open-terminal-menu-when-termianl-desktop-app-not-exist.patch
 gooroom-20-create-an-application-shortcut-icon-on-the-desktop.patch
+gooroom-21-update-open-terminal-menu-when-user-do-not-have-exec-permission.patch
