@@ -1,0 +1,20 @@
+diff --git a/gnome-flashback/libdesktop/gf-icon-view.c b/gnome-flashback/libdesktop/gf-icon-view.c
+index 1f987e8..56020ba 100644
+--- a/gnome-flashback/libdesktop/gf-icon-view.c
++++ b/gnome-flashback/libdesktop/gf-icon-view.c
+@@ -864,6 +864,7 @@ desktop_changed_cb (GFileMonitor      *monitor,
+         break;
+ 
+       case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
++        file_created (self, file);
+         break;
+ 
+       case G_FILE_MONITOR_EVENT_DELETED:
+@@ -871,7 +872,6 @@ desktop_changed_cb (GFileMonitor      *monitor,
+         break;
+ 
+       case G_FILE_MONITOR_EVENT_CREATED:
+-        file_created (self, file);
+         break;
+ 
+       case G_FILE_MONITOR_EVENT_ATTRIBUTE_CHANGED:
