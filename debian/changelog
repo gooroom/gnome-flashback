@@ -1,3 +1,11 @@
+gnome-flashback (3.38.0-2+grm3u7) unstable; urgency=medium
+
+  [ heejun.jang ]
+  * [719e3611] Update open-terminal menu when user do not have exec-permission
+  * [d6f7bdc8] Change create file logic when file change done signal detected
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Mon, 13 Nov 2023 16:08:31 +0900
+
 gnome-flashback (3.38.0-2+grm3u6) unstable; urgency=medium
 
   [ boyeon.choi ]
