@@ -1,0 +1,208 @@
+diff --git a/gnome-flashback/libdesktop/gf-icon-view.c b/gnome-flashback/libdesktop/gf-icon-view.c
+index 1f0390c..080cd13 100644
+--- a/gnome-flashback/libdesktop/gf-icon-view.c
++++ b/gnome-flashback/libdesktop/gf-icon-view.c
+@@ -54,6 +54,7 @@ struct _GfIconView
+ 
+   GtkGesture         *multi_press;
+   GtkGesture         *drag;
++  GtkGesture        *long_press;
+ 
+   GFile              *desktop;
+   GFileMonitor       *monitor;
+@@ -478,6 +479,49 @@ resort_icons (GfIconView *self,
+   remove_and_readd_icons (self);
+ }
+ 
++static void
++on_activate_event_cb(GtkWidget *widget,
++               GdkEventButton *event,
++               gpointer user_data) {
++  gtk_menu_item_activate(GTK_MENU_ITEM(widget));
++}
++
++static void
++on_motion_event_cb(GtkWidget *widget,
++               GdkEventMotion *event,
++               gpointer popup_menu) {
++
++  GList *menu_items = gtk_container_get_children(GTK_CONTAINER(popup_menu));
++  GtkWidget *submenu;
++  for (GList *iter = menu_items; iter != NULL; iter = iter->next) {
++        if (GTK_IS_MENU_ITEM(iter->data)) {
++           submenu = gtk_menu_item_get_submenu(GTK_MENU_ITEM(iter->data));
++           if (iter->data == widget) {
++               if(submenu) {
++                   gtk_menu_popup_at_widget(GTK_MENU(submenu), widget, GDK_GRAVITY_NORTH_EAST, GDK_GRAVITY_NORTH_WEST, NULL);
++               }
++               gtk_menu_item_select(GTK_MENU_ITEM(widget));
++               continue;
++           }
++           if(submenu) {
++              gtk_menu_popdown(GTK_MENU(submenu));
++           }
++           gtk_menu_item_deselect(GTK_MENU_ITEM(iter->data));
++        }
++    }
++  g_list_free(menu_items);
++}
++
++static void
++setup_touch_events(GtkWidget *menu_item, GtkWidget *popup_menu) {
++
++    gtk_widget_add_events(menu_item, GDK_TOUCH_MASK | GDK_POINTER_MOTION_MASK);
++
++    g_signal_connect(menu_item, "button-release-event", G_CALLBACK(on_activate_event_cb), NULL);
++    g_signal_connect(menu_item, "motion-notify-event", G_CALLBACK(on_motion_event_cb), popup_menu);
++}
++
++
+ static void
+ unselect_cb (gpointer data,
+              gpointer user_data)
+@@ -1170,6 +1214,7 @@ append_placement_submenu (GfIconView *self,
+ 
+       gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,menu);
+ 
+       data = g_new0 (GfPlacementData, 1);
+ 
+@@ -1285,6 +1330,7 @@ append_sort_by_submenu (GfIconView *self,
+ 
+       gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,menu);
+ 
+       data = g_new0 (GfSortByData, 1);
+ 
+@@ -1324,6 +1370,7 @@ create_popup_menu (GfIconView *self)
+   item = gtk_menu_item_new_with_label (_("New Folder"));
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   g_signal_connect (item, "activate",
+                     G_CALLBACK (new_folder_cb),
+@@ -1332,26 +1379,31 @@ create_popup_menu (GfIconView *self)
+   item = gtk_separator_menu_item_new ();
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   item = gtk_menu_item_new_with_label (_("Placement"));
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   append_placement_submenu (self, item);
+ 
+   item = gtk_menu_item_new_with_label (_("Sort by"));
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   append_sort_by_submenu (self, item);
+ 
+   item = gtk_separator_menu_item_new ();
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   item = gtk_menu_item_new_with_label (_("Change Background"));
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   g_signal_connect (item, "activate",
+                     G_CALLBACK (change_background_cb),
+@@ -1360,6 +1412,7 @@ create_popup_menu (GfIconView *self)
+   item = gtk_menu_item_new_with_label (_("Display Settings"));
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   g_signal_connect (item, "activate",
+                     G_CALLBACK (display_settings_cb),
+@@ -1371,10 +1424,13 @@ create_popup_menu (GfIconView *self)
+     item = gtk_separator_menu_item_new ();
+     gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+     gtk_widget_show (item);
++    setup_touch_events(item,popup_menu);
+    
+     item = gtk_menu_item_new_with_label (_("Open Terminal"));
+     gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+     gtk_widget_show (item);
++    setup_touch_events(item,popup_menu);
++
+    
+     g_signal_connect (item, "activate",
+                       G_CALLBACK (open_terminal_cb),
+@@ -1470,6 +1526,33 @@ multi_press_pressed_cb (GtkGestureMultiPress *gesture,
+     }
+ }
+ 
++static void
++long_press_pressed_cb (GtkGestureLongPress *gesture,
++                        gdouble               x,
++                        gdouble               y,
++                        GfIconView           *self)
++{
++  GdkEventSequence *sequence;
++  const GdkEvent *event;
++  GtkWidget *popup_menu;
++ 
++  unselect_icons (self);
++ 
++  if (!gtk_widget_has_focus (GTK_WIDGET (self)))
++    gtk_widget_grab_focus (GTK_WIDGET (self));
++
++
++  sequence = gtk_gesture_single_get_current_sequence (GTK_GESTURE_SINGLE (gesture));
++  event = gtk_gesture_get_last_event (GTK_GESTURE (gesture), sequence);
++  
++  popup_menu = create_popup_menu (self);
++  g_object_ref_sink (popup_menu);
++  
++  gtk_menu_popup_at_pointer (GTK_MENU (popup_menu), event);
++  g_object_unref (popup_menu);
++  
++} 
++
+ static void
+ drag_begin_cb (GtkGestureDrag *gesture,
+                gdouble         start_x,
+@@ -2582,6 +2665,7 @@ gf_icon_view_dispose (GObject *object)
+   g_clear_object (&self->thumbnail_factory);
+ 
+   g_clear_object (&self->multi_press);
++  g_clear_object (&self->long_press);
+   g_clear_object (&self->drag);
+ 
+   g_clear_object (&self->desktop);
+@@ -2989,18 +3073,23 @@ gf_icon_view_init (GfIconView *self)
+   self->thumbnail_factory = gf_thumbnail_factory_new ();
+ 
+   self->multi_press = gtk_gesture_multi_press_new (GTK_WIDGET (self));
++  self->long_press = gtk_gesture_long_press_new (GTK_WIDGET (self));
+   self->drag = gtk_gesture_drag_new (GTK_WIDGET (self));
+ 
+   gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (self->multi_press), 0);
++  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (self->long_press), 0);
++
+ 
+   g_signal_connect (self->multi_press, "pressed",
+                     G_CALLBACK (multi_press_pressed_cb),
+                     self);
+ 
++    g_signal_connect (self->long_press, "pressed",
++                      G_CALLBACK (long_press_pressed_cb),
++                      self);
+   g_signal_connect (self->drag, "drag-begin",
+                     G_CALLBACK (drag_begin_cb),
+                     self);
+-
+   g_signal_connect (self->drag, "drag-end",
+                     G_CALLBACK (drag_end_cb),
+                     self);
+

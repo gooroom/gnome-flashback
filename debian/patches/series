@@ -23,3 +23,4 @@ gooroom-22-feat-added-tablet-mode-check-util-function.patch
 gooroom-23-update-desktop-icon-style.patch
 gooroom-24-popupmenu-touch-usability-enhance.patch
 gooroom-25-temp-icon-drag-disable.patch
+gooroom-26-add-touch-event-for-desktop-popupmenu.patch
