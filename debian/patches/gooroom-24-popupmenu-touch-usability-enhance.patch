@@ -1,0 +1,137 @@
+diff --git a/gnome-flashback/libdesktop/gf-icon.c b/gnome-flashback/libdesktop/gf-icon.c
+index 4b28a48..81c4d82 100644
+--- a/gnome-flashback/libdesktop/gf-icon.c
++++ b/gnome-flashback/libdesktop/gf-icon.c
+@@ -20,6 +20,7 @@
+ 
+ #include <gio/gdesktopappinfo.h>
+ #include <glib/gi18n.h>
++#include <gtk/gtk.h>
+ 
+ #include "gf-desktop-enums.h"
+ #include "gf-desktop-enum-types.h"
+@@ -353,6 +354,7 @@ setup_drag_source (GfIcon *self)
+ 
+   g_signal_connect (self, "drag-failed",
+                     G_CALLBACK (drag_failed_cb), self);
++
+ }
+ 
+ static void
+@@ -489,6 +491,41 @@ properties_cb (GtkMenuItem *item,
+   g_strfreev (uris);
+ }
+ 
++static void
++on_activate_event(GtkWidget *widget, 
++               GdkEventButton *event, 
++               gpointer user_data) {
++  gtk_menu_item_activate(GTK_MENU_ITEM(widget));
++}
++
++static void
++on_motion_event(GtkWidget *widget,
++               GdkEventMotion *event,
++               gpointer popup_menu) {
++
++  GList *menu_items = gtk_container_get_children(GTK_CONTAINER(popup_menu));
++  for (GList *iter = menu_items; iter != NULL; iter = iter->next) {
++        if (GTK_IS_MENU_ITEM(iter->data)) {
++           if (iter->data == widget) {
++		gtk_menu_item_select(GTK_MENU_ITEM(widget));
++		continue;
++           }
++           gtk_menu_item_deselect(GTK_MENU_ITEM(iter->data));
++        }
++    }
++  g_list_free(menu_items);
++}
++
++
++static void 
++setup_touch_events(GtkWidget *menu_item, GtkWidget *popup_menu) {
++    
++    gtk_widget_add_events(menu_item, GDK_TOUCH_MASK | GDK_POINTER_MOTION_MASK);    
++
++    g_signal_connect(menu_item, "button-release-event", G_CALLBACK(on_activate_event), NULL);
++    g_signal_connect(menu_item, "motion-notify-event", G_CALLBACK(on_motion_event), popup_menu);
++}
++
+ static GtkWidget *
+ create_popup_menu (GfIcon *self)
+ {
+@@ -507,6 +544,7 @@ create_popup_menu (GfIcon *self)
+ 
+   popup_menu = gtk_menu_new ();
+ 
++
+   context = gtk_widget_get_style_context (popup_menu);
+   gtk_style_context_add_class (context, GTK_STYLE_CLASS_CONTEXT_MENU);
+ 
+@@ -517,6 +555,7 @@ create_popup_menu (GfIcon *self)
+   gtk_widget_set_sensitive (item, n_selected_icons == 1);
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   label = gtk_bin_get_child (GTK_BIN (item));
+   gtk_accel_label_set_accel (GTK_ACCEL_LABEL (label), GDK_KEY_Return, 0);
+@@ -548,11 +587,14 @@ create_popup_menu (GfIcon *self)
+       item = gtk_separator_menu_item_new ();
+       gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,popup_menu);
+ 
+       item = gtk_menu_item_new_with_label (_("Move to Trash"));
+       gtk_widget_set_sensitive (item, !disable_delete);
+       gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,popup_menu);
++ 
+ 
+       label = gtk_bin_get_child (GTK_BIN (item));
+       gtk_accel_label_set_accel (GTK_ACCEL_LABEL (label), GDK_KEY_Delete, 0);
+@@ -568,10 +610,14 @@ create_popup_menu (GfIcon *self)
+       item = gtk_separator_menu_item_new ();
+       gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,popup_menu);
++
+ 
+       item = gtk_menu_item_new_with_label (_("Rename..."));
+       gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,popup_menu);
++
+ 
+       label = gtk_bin_get_child (GTK_BIN (item));
+       gtk_accel_label_set_accel (GTK_ACCEL_LABEL (label), GDK_KEY_F2, 0);
+@@ -589,6 +635,7 @@ create_popup_menu (GfIcon *self)
+       item = gtk_separator_menu_item_new ();
+       gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,popup_menu);
+ 
+       is_empty = gf_trash_icon_is_empty (GF_TRASH_ICON (self));
+ 
+@@ -596,6 +643,7 @@ create_popup_menu (GfIcon *self)
+       gtk_widget_set_sensitive (item, !is_empty);
+       gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+       gtk_widget_show (item);
++      setup_touch_events(item,popup_menu);
+ 
+       g_signal_connect (item, "activate",
+                         G_CALLBACK (empty_trash_cb),
+@@ -605,10 +653,12 @@ create_popup_menu (GfIcon *self)
+   item = gtk_separator_menu_item_new ();
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   item = gtk_menu_item_new_with_label (_("Properties"));
+   gtk_menu_shell_append (GTK_MENU_SHELL (popup_menu), item);
+   gtk_widget_show (item);
++  setup_touch_events(item,popup_menu);
+ 
+   g_signal_connect (item, "activate",
+                     G_CALLBACK (properties_cb),
