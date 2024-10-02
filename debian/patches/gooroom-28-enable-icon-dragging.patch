@@ -1,0 +1,84 @@
+diff --git a/gnome-flashback/libdesktop/gf-icon.c b/gnome-flashback/libdesktop/gf-icon.c
+index 160c90e..6e09a31 100644
+--- a/gnome-flashback/libdesktop/gf-icon.c
++++ b/gnome-flashback/libdesktop/gf-icon.c
+@@ -36,7 +36,6 @@ typedef struct
+   GtkGesture      *multi_press;
+ 
+   GtkGesture	  *long_press;  
+-  GtkGesture      *drag; // temp obeject for disable origin drag event
+ 
+   double           press_x;
+   double           press_y;
+@@ -317,15 +316,15 @@ drag_failed_cb (GtkWidget      *widget,
+ static void
+ setup_drag_source (GfIcon *self)
+ {
+-//  GdkModifierType modifiers;
+-//  GdkDragAction actions;
++  GdkModifierType modifiers;
++  GdkDragAction actions;
+   GtkTargetList *target_list;
+   GdkAtom target;
+ 
+-//  modifiers = GDK_BUTTON1_MASK | GDK_BUTTON2_MASK;
+-//  actions = GDK_ACTION_COPY | GDK_ACTION_MOVE;
++  modifiers = GDK_BUTTON1_MASK | GDK_BUTTON2_MASK;
++  actions = GDK_ACTION_COPY | GDK_ACTION_MOVE;
+ 
+-//  gtk_drag_source_set (GTK_WIDGET (self), modifiers, NULL, 0, actions);
++  gtk_drag_source_set (GTK_WIDGET (self), modifiers, NULL, 0, actions);
+ 
+   target_list = gtk_target_list_new (NULL, 0);
+ 
+@@ -668,18 +667,6 @@ create_popup_menu (GfIcon *self)
+   return popup_menu;
+ }
+ 
+-static void
+-gesture_drag_update_cb ( GtkGestureDrag *gesture,
+-                        gdouble               x,
+-                        gdouble               y,
+-                        GfIcon               *self)
+-{
+-  GfIconPrivate *priv;
+-  priv = gf_icon_get_instance_private (self);
+- 
+-  priv->is_pressed = FALSE; 
+-}
+-
+ static void
+ long_press_pressed_cb (GtkGestureMultiPress *gesture,
+                         gdouble               x,
+@@ -1222,7 +1209,6 @@ gf_icon_dispose (GObject *object)
+ 
+   g_clear_object (&priv->multi_press);
+   g_clear_object (&priv->long_press);
+-  g_clear_object (&priv->drag);
+ 
+   g_clear_object (&priv->file);
+   g_clear_object (&priv->info);
+@@ -1553,11 +1539,9 @@ gf_icon_init (GfIcon *self)
+ 
+   priv->multi_press = gtk_gesture_multi_press_new (GTK_WIDGET (self));
+   priv->long_press = gtk_gesture_long_press_new (GTK_WIDGET (self));
+-  priv->drag = gtk_gesture_drag_new(GTK_WIDGET(self));
+ 
+   gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (priv->multi_press), 0);
+   gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (priv->long_press), 0);
+-  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (priv->drag), 0);
+ 
+   g_signal_connect (priv->multi_press, "pressed",
+                     G_CALLBACK (multi_press_pressed_cb),
+@@ -1571,10 +1555,6 @@ gf_icon_init (GfIcon *self)
+                       G_CALLBACK (long_press_pressed_cb),
+                       self);
+   }
+-    g_signal_connect (priv->drag, "drag-update",
+-                      G_CALLBACK (gesture_drag_update_cb),
+-                      self);
+-
+   gtk_widget_set_focus_on_click (GTK_WIDGET (self), FALSE);
+ 
+   setup_drag_source (self);
+

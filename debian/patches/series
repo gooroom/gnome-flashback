@@ -24,3 +24,5 @@ gooroom-23-update-desktop-icon-style.patch
 gooroom-24-popupmenu-touch-usability-enhance.patch
 gooroom-25-temp-icon-drag-disable.patch
 gooroom-26-add-touch-event-for-desktop-popupmenu.patch
+gooroom-27-add-screen-search-in-osd-show-function.patch
+gooroom-28-enable-icon-dragging.patch
