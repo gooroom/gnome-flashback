@@ -1,3 +1,12 @@
+gnome-flashback (3.46.0-1+grm4u4) unstable; urgency=medium
+
+  [ gangmo.seong ]
+  * [46483fd5] [feat] enhance popupmenu usability & disabled icon drag temporary
+  * [355fafcf] [feat] add touch event for activate desktop popupmenu
+  * [e4f56537] [feat] add screen search logic in osd show function and eanbled icon drag
+
+ -- Gooroom Autobuilder <jenkins@gooroom.kr>  Tue, 05 Nov 2024 17:31:16 +0900
+
 gnome-flashback (3.46.0-1+grm4u3) unstable; urgency=medium
 
   [ boyeon.choi ]
